@@ -1,0 +1,36 @@
+# Gradle and build output
+.gradle/
+build/
+.kotlin/
+out/
+
+# IDEs
+.idea/
+*.iml
+.vscode/
+*.code-workspace
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Jagex files: never commit the game cache, client, keys or recordings.
+/data/
+cache/
+*.dat2
+*.idx[0-9]*
+*.idx255
+xteas.json
+keys.json
+*.jar
+!gradle/wrapper/gradle-wrapper.jar
+*.jav_config
+recordings/
+*.bin
+
+# Local config and secrets
+*.local.*
+.env
+*.pem
+*.key
+rsa*.toml
