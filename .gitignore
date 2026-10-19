@@ -16,7 +16,7 @@ Thumbs.db
 
 # Jagex files: never commit the game cache, client, keys or recordings.
 /data/
-cache/
+/cache/
 *.dat2
 *.idx[0-9]*
 *.idx255
