@@ -27,3 +27,8 @@ jobs:
           java-version: "21"
       - uses: gradle/actions/setup-gradle@v4
       - run: ./gradlew -p tick-recorder build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tick-recorder-jar
+          path: tick-recorder/build/libs/*.jar
+          if-no-files-found: error
