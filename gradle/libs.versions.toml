@@ -9,6 +9,7 @@ kotlinx-serialization = "1.11.0"
 
 [libraries]
 rsprot-api = { module = "net.rsprot:osrs-241-api", version.ref = "rsprot" }
+rsprot-desktop = { module = "net.rsprot:osrs-241-desktop", version.ref = "rsprot" }
 displee-cache = { module = "com.displee:rs-cache-library", version.ref = "displee-cache" }
 kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinx-serialization" }
 kotlin-logging = { module = "io.github.oshai:kotlin-logging-jvm", version.ref = "kotlin-logging" }
