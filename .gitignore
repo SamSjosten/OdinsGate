@@ -28,6 +28,9 @@ keys.json
 recordings/
 *.bin
 
+# deploy/auto-deploy.sh's state on the server VM
+/.deploy/
+
 # Local config and secrets
 *.local.*
 .env
