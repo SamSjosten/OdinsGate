@@ -35,6 +35,17 @@ jobs:
       - uses: actions/checkout@v4
       - run: node --test .github/scripts/*.test.js
 
+  # The launcher's version file against the pull request (.github/scripts/launcher-version.js): a change to the pin
+  # table or the server's modulus bumps it, and a bump is newer than the last and not released yet.
+  launcher-version:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: node .github/scripts/launcher-version.js "origin/${{ github.base_ref }}" HEAD
+
   launcher:
     runs-on: ubuntu-latest
     steps:

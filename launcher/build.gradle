@@ -26,7 +26,10 @@ dependencies {
 }
 
 group = 'net.odinsgate'
-version = '0.1.0'
+// The launcher's version is launcher/version.txt, which the release workflow reads too: a merge to main that changes
+// it publishes a release (README, "Releases"). min-bootstrap-version.txt next to it is the oldest installed shell
+// that can still run a new release.
+version = file('version.txt').text.trim()
 
 tasks.withType(JavaCompile).configureEach {
 	options.encoding = 'UTF-8'

@@ -176,3 +176,44 @@ The core that later PRs build on; no window or releases yet:
 
 The spike that proved the patching route on the real jars was PR #113, closed unmerged as planned: nothing of
 RuneLite's or Jagex's enters this repo, in git or in a release.
+
+## Releases
+
+A release is a merge to `main` that changes `launcher/version.txt` (`build.gradle` reads it, so the jar's version is
+the file's). `.github/workflows/release.yml` then builds the jars and writes the manifest with the launcher's own
+release tool, `net.odinsgate.launcher.Release`: every jar under `lib/` with its SHA-256 and size, the pin table from
+`src/main/resources/runelite-pins.json`, the server (`odinsgate.net`, 43594 and 43595) with the modulus from
+`src/main/resources/rsa-modulus.txt`, and `minBootstrapVersion` from `launcher/min-bootstrap-version.txt`, the oldest
+installed shell that can still run the release (bumped only when the hand-off between shell and version changes).
+The `publish` job, which only a push to `main` or a run by hand without `dry_run` reaches, signs the manifest with
+the key in the `release` Environment, checks the signature against the keys built into `TrustedKeys` (a key no
+installed launcher trusts publishes nothing), makes a draft release `v<version>`, uploads the jars, then the manifest
+and its `.sig` last, and only then publishes it as the latest: `releases/latest/download/manifest.json` is what
+every installed launcher fetches (`Updater`), and `releases/download/v<version>/<jar>` is where each file is.
+
+- Dry runs: a pull request that touches the release path (`version.txt`, `min-bootstrap-version.txt`,
+  `build.gradle`, `Release.java`, the workflow), and **Run workflow** with `dry_run` on, do the same build, sign with
+  a throwaway key made in the run, verify, and publish nothing; the files are the run's `release-files` artifact.
+- CI's `launcher-version` job (`.github/scripts/launcher-version.js`, its tests beside it) fails a pull request that
+  changes the pin table or the modulus without bumping `version.txt` (the signed manifest carries them, so nothing
+  else would ever get them to a launcher), a bump that isn't newer than the last or is a tag released already, or a
+  `min-bootstrap-version.txt` change without a bump or above the version.
+- `ReleaseTest` builds a release from a made-up lib folder, signs it with a throwaway key and runs an `Updater`
+  against a fake GitHub serving the files under the tool's asset names, so the names the workflow publishes under
+  are proven to be the ones the updater asks for. The tool itself refuses a lib folder built from another version
+  than the one named, a `minBootstrapVersion` above the version, and anything a launcher's own parser would.
+- Sam's setup, once, before the first version bump merges (the keys are made on his own PC, never in a session, a
+  container or a VM, and never written anywhere but the password manager and the Environment):
+  1. `openssl genpkey -algorithm ed25519 -out release-primary.pem`, and the same again for `release-backup.pem`,
+     which stays offline in the password manager. Each one's public half, for `TrustedKeys`:
+     `openssl pkey -in release-primary.pem -pubout -outform DER | base64 -w0` (plain `base64` on a Mac).
+  2. Repository settings, Environments: `release`, deployment branches `main` only, Sam as required reviewer (one
+     click per release), and the secret `RELEASE_SIGNING_KEY` holding the whole text of `release-primary.pem`. The
+     workflow names the Environment, so GitHub would make an unprotected one at the first release if it isn't there.
+  3. A pull request that puts both public halves into `TrustedKeys.SPKI_BASE64` (primary first, backup last) and
+     bumps `version.txt`: its merge is the first release. Until then every real run stops at `verify` with "no
+     release keys are built into this launcher yet", and the test VM keeps running from `--manifest`.
+  4. `.github/CODEOWNERS` names Sam for `.github/workflows/`, so a change to the release path asks for his review.
+- A release that turns out broken ships again as a new, higher version: the updater never downgrades. A primary key
+  lost or leaked: a manifest signed by the backup key names a new primary in `keys.primary`, and the next release's
+  jars carry it in `TrustedKeys` (see `Updater`).

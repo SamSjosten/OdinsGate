@@ -78,6 +78,14 @@ public final class Manifest
 	/** One file of the launcher release, hashed so a download or a cached copy can be checked before it runs. */
 	public record FileEntry(String path, String sha256, long size)
 	{
+		/**
+		 * The release asset the file is published as: its bare name, under {@code releases/download/v<version>/}.
+		 * The release tool uploads each file under this name and the updater fetches it by it.
+		 */
+		public String assetName()
+		{
+			return path.substring(path.lastIndexOf('/') + 1);
+		}
 	}
 
 	private Manifest(String version, String minBootstrapVersion, Server server, Map<Integer, Pin> pins,
