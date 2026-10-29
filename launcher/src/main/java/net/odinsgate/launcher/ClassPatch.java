@@ -21,8 +21,9 @@ import org.objectweb.asm.tree.MethodNode;
 
 /**
  * One RuneLite class's changes, found by {@link Preflight} and applied by {@link PatchingClassLoader} as the class
- * loads: string constants replaced (the server key, the two host checks) and {@code void} methods made to return at
- * once ({@code updateVanilla}, which could otherwise download a gamepack). Each rule carries the exact count the scan
+ * loads: constants replaced (the server key and the two host checks, strings; the game port, an int, when the server
+ * isn't on the default port) and {@code void} methods made to return at once ({@code updateVanilla}, which could
+ * otherwise download a gamepack). Each rule carries the exact count the scan
  * found; {@link #apply} throws {@link PatchException} if the class it is handed does not match that count, so a
  * RuneLite that changed under our pin stops the launch rather than running half-patched.
  *
@@ -32,19 +33,26 @@ import org.objectweb.asm.tree.MethodNode;
 public final class ClassPatch
 {
 	/**
-	 * A string constant to replace.
+	 * A constant to replace: a {@link String}, or an {@link Integer} for the game port.
 	 *
-	 * @param what a short name for the log ("server key", "host check")
+	 * @param what a short name for the log ("server key", "host check", "game port")
 	 * @param from the constant as the scan found it
-	 * @param to what it becomes
+	 * @param to what it becomes, of the same type
 	 * @param method when set, only inside this {@code name+descriptor} method
 	 * @param endsWithOnly when true, only where {@code String.endsWith} takes it (the client's host check)
 	 * @param fields when true, also a constant field's value, not only {@code ldc} instructions
 	 * @param expected how many replacements the scan counted; {@link #apply} insists on exactly this many
 	 */
-	public record Rule(String what, String from, String to, String method, boolean endsWithOnly, boolean fields,
+	public record Rule(String what, Object from, Object to, String method, boolean endsWithOnly, boolean fields,
 		int expected)
 	{
+		public Rule
+		{
+			if (!(from instanceof String || from instanceof Integer) || from.getClass() != to.getClass())
+			{
+				throw new IllegalArgumentException(what + ": from and to must both be strings or both be ints");
+			}
+		}
 	}
 
 	private final String className;
@@ -114,14 +122,14 @@ public final class ClassPatch
 			}
 			for (AbstractInsnNode insn : method.instructions)
 			{
-				if (!(insn instanceof LdcInsnNode ldc) || !(ldc.cst instanceof String value))
+				if (!(insn instanceof LdcInsnNode ldc))
 				{
 					continue;
 				}
 				for (int i = 0; i < rules.size(); i++)
 				{
 					Rule rule = rules.get(i);
-					if (rule.from().equals(value) && (rule.method() == null || rule.method().equals(key))
+					if (rule.from().equals(ldc.cst) && (rule.method() == null || rule.method().equals(key))
 						&& (!rule.endsWithOnly() || takenByEndsWith(ldc)))
 					{
 						ldc.cst = rule.to();
