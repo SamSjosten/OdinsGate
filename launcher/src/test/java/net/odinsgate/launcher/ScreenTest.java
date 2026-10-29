@@ -113,7 +113,7 @@ public class ScreenTest
 		Screen screen = new Screen(false, false);
 		screen.start();
 		assertEquals(List.of(new Screen.Command.RetryAfter(Screen.RETRY_WAIT)),
-			screen.on(checked(new ServerCheck.Result.Full(50), T0)));
+			screen.on(checked(new ServerCheck.Result.Full(241, 50), T0)));
 		assertEquals("The server is full (50 players).", screen.view().status());
 		assertEquals("Trying again in 30 seconds.", screen.view().detail());
 		assertTrue(screen.view().canRetry());
@@ -202,7 +202,8 @@ public class ScreenTest
 		assertTrue(view.busy());
 		assertFalse(view.canPlay());
 
-		assertEquals(List.of(), screen.on(new Screen.Event.Launched(4321)));
+		assertEquals(List.of(new Screen.Command.WatchEvery(Screen.WATCH_PERIOD)),
+			screen.on(new Screen.Event.Launched(4321)));
 		view = screen.view();
 		assertEquals(Screen.Phase.RUNNING, view.phase());
 		assertEquals("The game is running.", view.status());
@@ -236,6 +237,76 @@ public class ScreenTest
 			"the click on Play is remembered through the check and the fetch");
 		screen.on(new Screen.Event.Launched(4322));
 		assertEquals(Screen.Phase.RUNNING, screen.view().phase());
+	}
+
+	private static Screen running(int revision)
+	{
+		Screen screen = new Screen(false, false);
+		screen.start();
+		screen.on(checked(new ServerCheck.Result.Ready(revision, 3), T0));
+		screen.on(new Screen.Event.Fetched());
+		screen.on(new Screen.Event.Play());
+		assertEquals(List.of(new Screen.Command.WatchEvery(Screen.WATCH_PERIOD)),
+			screen.on(new Screen.Event.Launched(4321)), "the server is watched while the game runs");
+		return screen;
+	}
+
+	@Test
+	public void aRevisionThatMovedWhileTheGameRunsAsksForARestart()
+	{
+		Screen screen = running(241);
+		assertEquals(List.of(), screen.on(new Screen.Event.Watched(241)));
+		assertEquals("The game is running.", screen.view().status());
+		assertEquals(List.of(), screen.on(new Screen.Event.Watched(null)), "a server that didn't answer says nothing");
+		assertEquals("The game is running.", screen.view().status());
+		assertEquals(List.of(), screen.on(new Screen.Event.Play()), "no restart before the server moved");
+
+		assertEquals(List.of(), screen.on(new Screen.Event.Watched(242)));
+		Screen.View view = screen.view();
+		assertEquals(Screen.Phase.RUNNING, view.phase());
+		assertEquals(Screen.UPDATED_LINE, view.status());
+		assertEquals(Screen.RESTART_LINE, view.detail());
+		assertTrue(view.canPlay());
+		assertFalse(view.busy());
+		screen.on(new Screen.Event.Watched(243));
+		assertEquals(view, screen.view(), "one restart is asked for, whatever the server says next");
+
+		assertEquals(List.of(new Screen.Command.Restart()), screen.on(new Screen.Event.Play()));
+		view = screen.view();
+		assertEquals(Screen.Phase.RUNNING, view.phase());
+		assertEquals("Closing the game…", view.status());
+		assertTrue(view.busy());
+		assertFalse(view.canPlay());
+		assertEquals(List.of(), screen.on(new Screen.Event.Play()), "one click closes it");
+
+		assertEquals(List.of(new Screen.Command.Check()), screen.on(new Screen.Event.Exited(1)),
+			"the closed game's exit starts the launch over instead of ending it");
+		assertEquals(Screen.Phase.CHECKING, screen.view().phase());
+		assertEquals(List.of(new Screen.Command.Fetch()), screen.on(checked(new ServerCheck.Result.Ready(242, 3), T0)));
+		assertEquals(List.of(new Screen.Command.Launch()), screen.on(new Screen.Event.Fetched()),
+			"no second click on Play");
+		assertEquals(List.of(new Screen.Command.WatchEvery(Screen.WATCH_PERIOD)),
+			screen.on(new Screen.Event.Launched(4322)));
+		assertEquals("The game is running.", screen.view().status());
+		assertEquals(List.of(), screen.on(new Screen.Event.Watched(242)));
+		assertEquals("The game is running.", screen.view().status(), "the new revision is the one the game runs");
+		screen.on(new Screen.Event.Exited(0));
+		assertEquals(Screen.Phase.EXITED, screen.view().phase(), "an exit that wasn't a restart ends as before");
+	}
+
+	@Test
+	public void aMovedRevisionTheLauncherDoesNotPinStopsAfterTheRestart()
+	{
+		Screen screen = running(241);
+		screen.on(new Screen.Event.Watched(242));
+		screen.on(new Screen.Event.Play());
+		screen.on(new Screen.Event.Exited(1));
+		assertEquals(List.of(), screen.on(checked(new ServerCheck.Result.UnknownRevision(242), T0)));
+		Screen.View view = screen.view();
+		assertEquals(Screen.Phase.STOPPED, view.phase());
+		assertEquals("The server was updated.", view.status());
+		assertTrue(view.detail().contains("242"), view.detail());
+		assertTrue(view.canRetry());
 	}
 
 	@Test

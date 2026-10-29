@@ -10,11 +10,13 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.util.Optional;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * What the launcher checks before Play, and while the game runs. Everything read here is plain, unencrypted HTTP
+ * What the launcher checks before Play, and ({@link #status}) while the game runs. Everything read here is plain,
+ * unencrypted HTTP
  * from our server, so it is hints only: it may stop a launch or word a message, never decide what code runs or
  * which key is used - those come from the signed manifest. One check opens at most three connections (status, the
  * game port, the served key) with short timeouts, far under the relay's 20 new connections a minute, and only a
@@ -51,6 +53,11 @@ public final class ServerCheck
 		this.http = HttpClient.newBuilder().connectTimeout(timeout).build();
 	}
 
+	/** What {@code /status.json} says: hints for a message, never a decision about code. */
+	public record Status(boolean up, boolean acceptingLogins, int revision, int players)
+	{
+	}
+
 	/** One outcome per check; the window words each for the friend, so the detail here is for the log. */
 	public sealed interface Result
 	{
@@ -64,8 +71,12 @@ public final class ServerCheck
 		{
 		}
 
-		/** The game is up but at its player limit, so a login would be refused: "The server is full." */
-		record Full(int players) implements Result
+		/**
+		 * The game is up, at {@code revision}, but at its player limit, so a login would be refused: "The server is
+		 * full." The revision is carried so a report after a restart onto a full server names the server's, not the
+		 * one the last game ran.
+		 */
+		record Full(int revision, int players) implements Result
 		{
 		}
 
@@ -87,41 +98,36 @@ public final class ServerCheck
 
 	public Result check(Manifest manifest)
 	{
-		String status;
+		String page;
 		try
 		{
-			status = get("/status.json");
+			page = get("/status.json");
 		}
 		catch (IOException e)
 		{
 			return offlineUnless(e);
 		}
-		boolean up;
-		boolean acceptingLogins;
-		int revision;
-		int players;
+		Status status;
 		try
 		{
-			JsonObject parsed = JsonParser.parseString(status).getAsJsonObject();
-			up = parsed.get("up").getAsBoolean();
-			acceptingLogins = parsed.get("acceptingLogins").getAsBoolean();
-			revision = parsed.get("revision").getAsInt();
-			players = parsed.get("players").getAsInt();
+			status = parseStatus(page);
 		}
 		catch (RuntimeException e)
 		{
 			// Something answered on the port, but not with our status page: a proxy's error page, say.
 			return new Result.Offline("the server's status page isn't readable");
 		}
-		if (!up)
+		if (!status.up())
 		{
 			return new Result.Offline("the server is still starting");
 		}
-		if (!acceptingLogins)
+		if (!status.acceptingLogins())
 		{
 			// Up, but at its player limit: a launch now ends at a refused login, so say what is really wrong.
-			return new Result.Full(players);
+			return new Result.Full(status.revision(), status.players());
 		}
+		int revision = status.revision();
+		int players = status.players();
 		try (Socket game = new Socket())
 		{
 			game.connect(new InetSocketAddress(host, gamePort), (int) timeout.toMillis());
@@ -141,6 +147,30 @@ public final class ServerCheck
 			return new Result.UnknownRevision(revision);
 		}
 		return new Result.Ready(revision, players);
+	}
+
+	/**
+	 * The status page alone, one connection, for the once-a-minute look while the game runs: whether the server
+	 * moved to another revision. Nothing when the server doesn't answer or the page isn't ours.
+	 */
+	public Optional<Status> status()
+	{
+		try
+		{
+			return Optional.of(parseStatus(get("/status.json")));
+		}
+		catch (IOException | RuntimeException e)
+		{
+			return Optional.empty();
+		}
+	}
+
+	/** The status page's fields; anything missing or of the wrong kind is a {@link RuntimeException}. */
+	static Status parseStatus(String page)
+	{
+		JsonObject parsed = JsonParser.parseString(page).getAsJsonObject();
+		return new Status(parsed.get("up").getAsBoolean(), parsed.get("acceptingLogins").getAsBoolean(),
+			parsed.get("revision").getAsInt(), parsed.get("players").getAsInt());
 	}
 
 	/**

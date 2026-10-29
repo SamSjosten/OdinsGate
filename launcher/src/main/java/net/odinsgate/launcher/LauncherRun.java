@@ -11,6 +11,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Duration;
+import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -43,6 +45,12 @@ public final class LauncherRun
 		{
 			return Optional.empty();
 		}
+
+		/** The server's status page while the game runs, one connection, or nothing when it doesn't answer. */
+		default Optional<ServerCheck.Status> status(Manifest.Server server)
+		{
+			return Optional.empty();
+		}
 	}
 
 	/** The launcher's exit codes when the game never ran; when it did, the launcher exits with the game's own. */
@@ -58,6 +66,13 @@ public final class LauncherRun
 	static final String RUNELITE_DIR = "runelite";
 	static final String LOGS_DIR = "logs";
 	static final String GAME_LOG = "game.log";
+	/** The launcher's own log, under the logs folder too; rotated by {@link RotatingLog}. */
+	static final String LAUNCHER_LOG = "launcher.log";
+	/** RuneLite's own log, under the game's home: what RuneLite logged, where the game's output ends. */
+	static final Path CLIENT_LOG = Path.of(Launch.GAME_HOME, ".runelite", "logs", "client.log");
+	/** How many of the launcher's last steps, and of its last looks at the server, a problem report carries. */
+	static final int RECENT_LINES = 40;
+	static final int RECENT_WATCHES = 10;
 
 	/**
 	 * The notice file: a short text on main, read over HTTPS from GitHub, so a line reaches friends without a server
@@ -113,6 +128,12 @@ public final class LauncherRun
 			public Optional<String> notice()
 			{
 				return fetchNotice(NOTICE);
+			}
+
+			@Override
+			public Optional<ServerCheck.Status> status(Manifest.Server server)
+			{
+				return new ServerCheck(server).status();
 			}
 		};
 	}
@@ -211,7 +232,8 @@ public final class LauncherRun
 			case ServerCheck.Result.Ready ready -> "the server is up at revision " + ready.revision() + " with "
 				+ ready.players() + " player(s)";
 			case ServerCheck.Result.Offline offline -> "the server is offline: " + offline.detail();
-			case ServerCheck.Result.Full full -> "the server is full (" + full.players() + " players)";
+			case ServerCheck.Result.Full full -> "the server is full (" + full.players() + " players) at revision "
+				+ full.revision();
 			case ServerCheck.Result.NoInternet noInternet -> "no internet: neither the server nor the probe answers";
 			case ServerCheck.Result.UnknownRevision unknown -> "the server runs revision " + unknown.revision()
 				+ ", which this launcher has no pin for yet";
@@ -237,6 +259,7 @@ public final class LauncherRun
 		private final Manifest.Server server;
 		private final Reporter report;
 		private volatile Manifest.Pin pin;
+		private volatile Integer revision;
 
 		private Session(LaunchOptions options, Manifest manifest, Platform platform, Map<String, String> env,
 			Path userHome, Launch.Installed installed, PrintStream log)
@@ -266,6 +289,42 @@ public final class LauncherRun
 			return server;
 		}
 
+		/** The system and chip this run is on. */
+		public Platform platform()
+		{
+			return platform;
+		}
+
+		/** The server's revision as the last check saw it, or null before one. */
+		public Integer revision()
+		{
+			return revision;
+		}
+
+		/** The pin the last Ready check chose, or null. */
+		public Manifest.Pin pin()
+		{
+			return pin;
+		}
+
+		/** The child JVM's log. */
+		public Path gameLog()
+		{
+			return dataDir.resolve(LOGS_DIR).resolve(GAME_LOG);
+		}
+
+		/** RuneLite's own log under the game's home. */
+		public Path clientLog()
+		{
+			return dataDir.resolve(CLIENT_LOG);
+		}
+
+		/** The launcher's last steps and checks, oldest first, for a problem report. */
+		public List<String> recent()
+		{
+			return report.recent();
+		}
+
 		/** True until the game has run once from this data folder: no game home exists yet. */
 		public boolean firstRun()
 		{
@@ -282,13 +341,25 @@ public final class LauncherRun
 			{
 				if (result instanceof ServerCheck.Result.UnknownRevision unknown)
 				{
-					// The revision is known even though it stops the launch: the status file says which one.
+					// The revision is known even though it stops the launch: the status file says which one. No pin
+					// goes with it, so an earlier run's pin is dropped rather than shown next to the new revision.
 					report.revision = unknown.revision();
+					revision = unknown.revision();
+					pin = null;
+				}
+				else if (result instanceof ServerCheck.Result.Full full)
+				{
+					// Known too, with whatever pin the manifest has for it, so a report after a restart onto a full
+					// server names the server's revision rather than the last game's.
+					report.revision = full.revision();
+					revision = full.revision();
+					pin = manifest.pin(full.revision());
 				}
 				report.fail(reason(result));
 				return result;
 			}
 			report.revision = ready.revision();
+			revision = ready.revision();
 			pin = manifest.pin(ready.revision());
 			if (pin == null)
 			{
@@ -321,12 +392,24 @@ public final class LauncherRun
 			}
 		}
 
-		/** Plans the launch and starts the game; a failure is reported and rethrown. */
+		/**
+		 * Plans the launch and starts the game, its log moved aside first when it has grown large; a failure is
+		 * reported and rethrown.
+		 */
 		public Process start(Launch.Pin fetched) throws IOException
 		{
 			report.state(StatusFile.State.LAUNCHING, fetched.gameJars().size() + " jars, "
 				+ (options.developerMode() ? "developer mode" : "normal mode"));
-			Path gameLog = dataDir.resolve(LOGS_DIR).resolve(GAME_LOG);
+			Path gameLog = gameLog();
+			try
+			{
+				RotatingLog.rotate(gameLog, RotatingLog.MAX_BYTES, RotatingLog.KEEP);
+			}
+			catch (IOException e)
+			{
+				// A log still held open by an earlier game, say: the game appends to it as before, and that's logged.
+				report.note("the game log " + gameLog + " could not be moved aside: " + e.getMessage(), true);
+			}
 			Process game;
 			try
 			{
@@ -347,6 +430,21 @@ public final class LauncherRun
 		public void fail(String why)
 		{
 			report.fail(why);
+		}
+
+		/**
+		 * The once-a-minute look at the server while the game runs: its status page, or nothing when it doesn't
+		 * answer. Kept with the recent lines for a problem report, logged only when the revision moved.
+		 */
+		public Optional<ServerCheck.Status> watch()
+		{
+			Optional<ServerCheck.Status> status = steps.status(server);
+			Integer seen = revision;
+			String line = status.map(s -> "the server is " + (s.up() ? "up" : "starting") + " at revision "
+				+ s.revision() + " with " + s.players() + " player(s)").orElse("the server didn't answer");
+			boolean moved = status.isPresent() && seen != null && status.get().revision() != seen;
+			report.watched("watch: " + line + (moved ? ", not the " + seen + " the game runs" : ""), moved);
+			return status;
 		}
 
 		/** Waits for the game and returns its exit code ({@link #EXIT_START} if interrupted). */
@@ -378,6 +476,8 @@ public final class LauncherRun
 	{
 		private final Path statusFile;
 		private final PrintStream log;
+		private final ArrayDeque<String> recent = new ArrayDeque<>();
+		private final ArrayDeque<String> watches = new ArrayDeque<>();
 		volatile Integer revision;
 		volatile Long gamePid;
 
@@ -387,8 +487,46 @@ public final class LauncherRun
 			this.log = log;
 		}
 
+		/** The last steps, then the last looks at the server, each oldest first. */
+		synchronized List<String> recent()
+		{
+			List<String> all = new ArrayList<>(recent);
+			all.addAll(watches);
+			return List.copyOf(all);
+		}
+
+		/** A line for the report and, when it matters, the log; never the status file. */
+		void note(String line, boolean worthLogging)
+		{
+			keep(recent, RECENT_LINES, line);
+			if (worthLogging)
+			{
+				log.println("[launcher] " + line);
+			}
+		}
+
+		/** A look at the server while the game runs: kept apart, so an hour of them doesn't push the steps out. */
+		void watched(String line, boolean worthLogging)
+		{
+			keep(watches, RECENT_WATCHES, line);
+			if (worthLogging)
+			{
+				log.println("[launcher] " + line);
+			}
+		}
+
+		private synchronized void keep(ArrayDeque<String> ring, int size, String line)
+		{
+			ring.addLast(clock.instant() + " " + line);
+			while (ring.size() > size)
+			{
+				ring.removeFirst();
+			}
+		}
+
 		void state(StatusFile.State state, String detail)
 		{
+			note(state + ": " + detail, false);
 			log.println("[launcher] " + state + ": " + detail);
 			if (statusFile == null)
 			{

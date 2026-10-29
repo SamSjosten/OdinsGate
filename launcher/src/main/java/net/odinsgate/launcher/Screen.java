@@ -12,7 +12,9 @@ import java.util.Objects;
  * plan's: before Play the launcher checks the server and fetches the game client; an offline server is tried again
  * every {@link #RETRY_WAIT} and, after {@link #LONG_OUTAGE}, the message says for how long; a changed key stops
  * the launch; the notice from GitHub is shown as it is; the first run carries the line about a new name and
- * password. Everything here runs on one thread, the window's.
+ * password. While the game runs the server is looked at every {@link #WATCH_PERIOD}; a revision that moved asks
+ * for a restart, which closes the game and starts the launch over. Everything here runs on one thread, the
+ * window's.
  */
 public final class Screen
 {
@@ -78,6 +80,16 @@ public final class Screen
 		record RetryAfter(Duration delay) implements Command
 		{
 		}
+
+		/** While the game runs, look at the server this often and answer each look with {@link Event.Watched}. */
+		record WatchEvery(Duration period) implements Command
+		{
+		}
+
+		/** Close the running game; its {@link Event.Exited} then starts the launch over. */
+		record Restart() implements Command
+		{
+		}
 	}
 
 	/** What happened. */
@@ -131,14 +143,23 @@ public final class Screen
 		record Failed(String why) implements Event
 		{
 		}
+
+		/** A look at the server while the game runs: the revision it reports, or null when it didn't answer. */
+		record Watched(Integer revision) implements Event
+		{
+		}
 	}
 
 	/** How long a failed check waits before it runs again by itself. */
 	public static final Duration RETRY_WAIT = Duration.ofSeconds(30);
 	/** From here on an outage's message says how long the server has been offline. */
 	public static final Duration LONG_OUTAGE = Duration.ofMinutes(5);
+	/** How often the server is looked at while the game runs. */
+	public static final Duration WATCH_PERIOD = Duration.ofMinutes(1);
 	/** More of a notice than this is cut, with an ellipsis. */
 	public static final int NOTICE_LIMIT = 500;
+	public static final String UPDATED_LINE = "The server was updated.";
+	public static final String RESTART_LINE = "Click Play to restart the game.";
 	public static final String FIRST_RUN_LINE =
 		"Make up a new name and password here. Never type the login of your real game account.";
 
@@ -155,6 +176,12 @@ public final class Screen
 	private Instant offlineSince;
 	/** When the next check runs by itself, or null. */
 	private Instant retryAt;
+	/** The revision the running game was started for, or null. */
+	private Integer revision;
+	/** The server moved to another revision while the game runs; Play restarts it. */
+	private boolean updateWaiting;
+	/** The game is being closed for a restart. */
+	private boolean closing;
 
 	/**
 	 * @param auto start the game without a click on Play, once
@@ -168,7 +195,7 @@ public final class Screen
 
 	public View view()
 	{
-		boolean busy = phase == Phase.CHECKING || phase == Phase.DOWNLOADING || phase == Phase.LAUNCHING;
+		boolean busy = phase == Phase.CHECKING || phase == Phase.DOWNLOADING || phase == Phase.LAUNCHING || closing;
 		return new View(phase, status, detail, busy, canPlay, canRetry, notice, firstRun);
 	}
 
@@ -194,6 +221,7 @@ public final class Screen
 			case Event.Tick tick -> tick(tick.now());
 			case Event.Notice notice -> notice(notice.text());
 			case Event.Failed failed -> stopped("The launcher ran into a problem.", failed.why());
+			case Event.Watched watched -> watched(watched.revision());
 		};
 	}
 
@@ -219,6 +247,7 @@ public final class Screen
 			case ServerCheck.Result.Ready ready ->
 			{
 				offlineSince = null;
+				revision = ready.revision();
 				phase = Phase.DOWNLOADING;
 				status = "Updating the game client for the server…";
 				detail = "Revision " + ready.revision();
@@ -310,11 +339,26 @@ public final class Screen
 	private List<Command> launched()
 	{
 		playWanted = false;
+		updateWaiting = false;
+		closing = false;
 		phase = Phase.RUNNING;
 		status = "The game is running.";
 		detail = "";
 		canPlay = false;
 		canRetry = false;
+		return List.of(new Command.WatchEvery(WATCH_PERIOD));
+	}
+
+	private List<Command> watched(Integer seen)
+	{
+		if (phase != Phase.RUNNING || closing || updateWaiting || seen == null || seen.equals(revision))
+		{
+			return List.of();
+		}
+		updateWaiting = true;
+		status = UPDATED_LINE;
+		detail = RESTART_LINE;
+		canPlay = true;
 		return List.of();
 	}
 
@@ -323,6 +367,12 @@ public final class Screen
 		if (phase != Phase.RUNNING)
 		{
 			return List.of();
+		}
+		closing = false;
+		if (playWanted)
+		{
+			// A restart: the game was closed for it, so straight back to the check, as a click on Play after an exit.
+			return check();
 		}
 		phase = Phase.EXITED;
 		status = code == 0 ? "The game closed." : "The game closed with an error (code " + code + ").";
@@ -341,6 +391,19 @@ public final class Screen
 			{
 				playWanted = true;
 				yield check();
+			}
+			case RUNNING ->
+			{
+				if (!updateWaiting || closing)
+				{
+					yield List.of();
+				}
+				playWanted = true;
+				closing = true;
+				status = "Closing the game…";
+				detail = "It starts again for the new revision.";
+				canPlay = false;
+				yield List.of(new Command.Restart());
 			}
 			default -> List.of();
 		};
