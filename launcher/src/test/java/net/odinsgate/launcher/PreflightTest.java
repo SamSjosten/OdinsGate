@@ -123,9 +123,44 @@ public class PreflightTest
 	}
 
 	@Test
-	public void aNonHexModulusIsAProgrammingError()
+	public void theGamePortIsPatchedOnlyWhenTheServerIsNotOnTheDefault() throws Exception
+	{
+		Preflight main = Preflight.scan(FakeClient.jars(dir), FakeClient.OUR_MODULUS);
+		assertTrue(main.complete(), () -> "missing: " + main.missing());
+		assertFalse(main.patches().get(FakeClient.CLIENT).summary().contains("game port"),
+			main.patches().get(FakeClient.CLIENT).summary());
+		assertTrue(main.report().stream().anyMatch(l -> l.contains("game port 43594") && l.contains("kept")),
+			main.report().toString());
+
+		Preflight staging = Preflight.scan(FakeClient.jars(dir), FakeClient.OUR_MODULUS, 44594);
+		assertTrue(staging.complete(), () -> "missing: " + staging.missing());
+		String summary = staging.patches().get(FakeClient.CLIENT).summary();
+		assertTrue(summary.contains("game port x2"), summary);
+		assertTrue(staging.report().stream().anyMatch(l -> l.contains("game port 43594") && l.contains("made 44594")),
+			staging.report().toString());
+	}
+
+	@Test
+	public void aClientWithoutThePortConstantRunsOnTheDefaultPortOnly() throws Exception
+	{
+		List<Path> jars = List.of(
+			FakeClient.injectedJar(dir, FakeClient.injectedClientWithoutPort()),
+			FakeClient.clientJar(dir, FakeClient.clientLoader()));
+		assertTrue(Preflight.scan(jars, FakeClient.OUR_MODULUS).complete());
+		Preflight staging = Preflight.scan(jars, FakeClient.OUR_MODULUS, 44594);
+		assertFalse(staging.complete());
+		assertTrue(staging.missing().stream().anyMatch(m -> m.contains("game port") && m.contains("44594")),
+			() -> staging.missing().toString());
+	}
+
+	@Test
+	public void aNonHexModulusOrABadPortIsAProgrammingError()
 	{
 		assertThrows(IllegalArgumentException.class,
 			() -> Preflight.scan(FakeClient.jars(dir), "not hex at all"));
+		assertThrows(IllegalArgumentException.class,
+			() -> Preflight.scan(FakeClient.jars(dir), FakeClient.OUR_MODULUS, 0));
+		assertThrows(IllegalArgumentException.class,
+			() -> Preflight.scan(FakeClient.jars(dir), FakeClient.OUR_MODULUS, 70000));
 	}
 }
