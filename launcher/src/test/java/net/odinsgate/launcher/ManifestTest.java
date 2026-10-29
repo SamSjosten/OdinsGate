@@ -81,6 +81,18 @@ public class ManifestTest
 	}
 
 	@Test
+	public void aHostMustFormARequestUri() throws Exception
+	{
+		rejected(good().replace("odinsgate.net", "odinsgate..net"));
+		rejected(good().replace("odinsgate.net", "odinsgate-"));
+		rejected(good().replace("odinsgate.net", "-odinsgate.net"));
+		rejected(good().replace("odinsgate.net", "odinsgate.net."));
+		rejected(good().replace("odinsgate.net", "odinsgate.net/path"));
+		// The LAN address friends' yaml uses today stays valid.
+		assertEquals("192.168.0.210", Manifest.parse(good().replace("odinsgate.net", "192.168.0.210")).server.host());
+	}
+
+	@Test
 	public void theModulusIsExactly1024LowercaseBits()
 	{
 		rejected(good().replace(MODULUS, MODULUS.toUpperCase()));

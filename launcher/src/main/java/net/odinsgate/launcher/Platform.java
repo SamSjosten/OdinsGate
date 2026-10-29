@@ -60,8 +60,9 @@ public record Platform(Os os, Arch arch)
 				return userHome.resolve("Library").resolve("Application Support").resolve(Names.DIR_CAPITALIZED);
 			default:
 			{
+				// The XDG spec calls a relative XDG_DATA_HOME invalid, to be ignored like an unset one.
 				String xdgData = env.get("XDG_DATA_HOME");
-				Path base = xdgData != null && !xdgData.isBlank()
+				Path base = xdgData != null && !xdgData.isBlank() && Path.of(xdgData).isAbsolute()
 					? Path.of(xdgData)
 					: userHome.resolve(".local").resolve("share");
 				return base.resolve(Names.DIR_LOWERCASE);

@@ -22,8 +22,9 @@ The core that later PRs build on; no window, downloads or releases yet:
   made on Sam's own PC, never in a session or a VM, and tests make throwaway pairs of their own.
 - `ServerCheck`: the pre-Play check, with 5-second timeouts and at most three connections per try (far under the
   relay's 20 new connections a minute): `/status.json`, the game port, and the served key from `/proxy-targets.yaml`.
-  Outcomes: ready, server offline (GitHub answers, our server doesn't), no internet, a revision the manifest doesn't
-  pin yet, or a served key that isn't the signed one, which stops the launch. Plain HTTP from the server is hints
+  Outcomes: ready, server offline (GitHub answers, our server doesn't), server full (up, but not taking logins), no
+  internet, a revision the manifest doesn't pin yet, or a served key that isn't the signed one, which stops the
+  launch. Plain HTTP from the server is hints
   only; it never decides what code runs.
 - `Platform` and `ClientCommand`: the per-system pieces. The game runs in a child JVM from our bundled runtime
   (`bin/java` is kept), through our patching loader (its own later PR), with RuneLite's bootstrap JVM arguments, its
