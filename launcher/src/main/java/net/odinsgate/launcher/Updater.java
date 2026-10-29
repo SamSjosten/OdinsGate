@@ -635,7 +635,7 @@ public final class Updater
 			Files.createDirectories(temp);
 			for (Manifest.FileEntry entry : accepted.manifest().files)
 			{
-				String asset = entry.path().substring(entry.path().lastIndexOf('/') + 1);
+				String asset = entry.assetName();
 				URI uri = URI.create(releases + "/download/v" + target + "/" + asset);
 				byte[] bytes = fetcher.fetch(uri);
 				if (bytes.length != entry.size() || !RuneLiteCache.sha256(bytes).equals(entry.sha256()))
