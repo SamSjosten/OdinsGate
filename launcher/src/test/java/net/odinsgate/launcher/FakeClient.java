@@ -10,6 +10,7 @@ import static org.objectweb.asm.Opcodes.ARETURN;
 import static org.objectweb.asm.Opcodes.ATHROW;
 import static org.objectweb.asm.Opcodes.DUP;
 import static org.objectweb.asm.Opcodes.INVOKESPECIAL;
+import static org.objectweb.asm.Opcodes.INVOKESTATIC;
 import static org.objectweb.asm.Opcodes.INVOKEVIRTUAL;
 import static org.objectweb.asm.Opcodes.IRETURN;
 import static org.objectweb.asm.Opcodes.NEW;
@@ -121,6 +122,17 @@ final class FakeClient
 
 	static byte[] clientLoader()
 	{
+		return clientLoader(Preflight.JAGEX_HOST);
+	}
+
+	/** A ClientLoader whose downloadConfig checks a Jagex host other than the one the launcher patches. */
+	static byte[] clientLoaderWithRenamedJagexHost()
+	{
+		return clientLoader(".jagex.net");
+	}
+
+	private static byte[] clientLoader(String host)
+	{
 		ClassWriter cw = newClass(Preflight.CLIENT_LOADER);
 		cw.visitField(ACC_PUBLIC | ACC_STATIC, "lastHost", "Ljava/lang/String;", null, null).visitEnd();
 		defaultCtor(cw, Preflight.CLIENT_LOADER);
@@ -138,7 +150,7 @@ final class FakeClient
 		// public RSConfig downloadConfig() { lastHost = ".jagex.com"; return null; }  — the patch makes the host "".
 		mv = cw.visitMethod(ACC_PUBLIC, "downloadConfig", "()Lnet/runelite/client/rs/RSConfig;", null, null);
 		mv.visitCode();
-		mv.visitLdcInsn(Preflight.JAGEX_HOST);
+		mv.visitLdcInsn(host);
 		mv.visitFieldInsn(PUTSTATIC, Preflight.CLIENT_LOADER, "lastHost", "Ljava/lang/String;");
 		mv.visitInsn(ACONST_NULL);
 		mv.visitInsn(ARETURN);
@@ -148,13 +160,51 @@ final class FakeClient
 		return cw.toByteArray();
 	}
 
+	/** A class that really reads the property: {@code property()} returns {@code System.getProperty(name)}. */
 	private static byte[] readsProperty(String internalName, String property)
 	{
 		ClassWriter cw = newClass(internalName);
 		defaultCtor(cw, internalName);
-		returnsString(cw, "property", property);
+		MethodVisitor mv = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "property", "()Ljava/lang/String;", null, null);
+		mv.visitCode();
+		mv.visitLdcInsn(property);
+		mv.visitMethodInsn(INVOKESTATIC, "java/lang/System", "getProperty", "(Ljava/lang/String;)Ljava/lang/String;",
+			false);
+		mv.visitInsn(ARETURN);
+		mv.visitMaxs(0, 0);
+		mv.visitEnd();
 		cw.visitEnd();
 		return cw.toByteArray();
+	}
+
+	/** A class that only holds the property's name, in a constant field nothing reads, and reads another one. */
+	private static byte[] holdsPropertyUnread(String internalName, String property)
+	{
+		ClassWriter cw = newClass(internalName);
+		cw.visitField(ACC_PUBLIC | ACC_STATIC | ACC_FINAL, "NAME", "Ljava/lang/String;", null, property).visitEnd();
+		defaultCtor(cw, internalName);
+		MethodVisitor mv = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "property", "()Ljava/lang/String;", null, null);
+		mv.visitCode();
+		mv.visitLdcInsn("something.else");
+		mv.visitMethodInsn(INVOKESTATIC, "java/lang/System", "getProperty", "(Ljava/lang/String;)Ljava/lang/String;",
+			false);
+		mv.visitInsn(ARETURN);
+		mv.visitMaxs(0, 0);
+		mv.visitEnd();
+		cw.visitEnd();
+		return cw.toByteArray();
+	}
+
+	/** A RuneLite-classes jar whose RuneLiteModule holds the http-service URL property's name but never reads it. */
+	static Path clientJarWithUnreadProperty(Path dir) throws IOException
+	{
+		Path client = dir.resolve("client-1.13.4.jar");
+		writeJar(client, Map.of(
+			Preflight.CLIENT_LOADER, clientLoader(),
+			"net/runelite/client/rs/RSConfig", trivial("net/runelite/client/rs/RSConfig"),
+			Preflight.MODULE, holdsPropertyUnread(Preflight.MODULE, Preflight.HTTP_SERVICE_URL),
+			Preflight.RTCONF_LOADER, readsProperty(Preflight.RTCONF_LOADER, Preflight.RTCONF)));
+		return client;
 	}
 
 	private static byte[] trivial(String internalName)
