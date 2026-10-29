@@ -42,7 +42,11 @@ import org.objectweb.asm.tree.MethodNode;
  *       {@code ""} so our host passes;</li>
  *   <li>{@code ClientLoader.updateVanilla}, when the jar has it, made to return at once, so a forged config can never
  *       make the client download a gamepack (stopped before the host check below is relaxed);</li>
- *   <li>{@code ".jagex.com"} in {@code ClientLoader.downloadConfig}, when the jar has it, made {@code ""}.</li>
+ *   <li>{@code ".jagex.com"} in {@code ClientLoader.downloadConfig}, when the jar has it, made {@code ""};</li>
+ *   <li>and only when the server isn't on the default game port (the staging server, {@code --server}): the int
+ *       constant {@value #DEFAULT_GAME_PORT} wherever the injected client holds it, made the server's port. RSProx
+ *       never needs this because the client talks to RSProx on the default port; a direct connection must carry the
+ *       port itself, since the jav_config and world list name hosts only.</li>
  * </ul>
  * And it checks, without patching, that {@code RuneLiteModule} reads {@code -Drunelite.http-service.url} (so the world
  * list is ours) and {@code RuntimeConfigLoader} reads {@code -Drunelite.rtconf} (so a local runtime config stands in
@@ -63,6 +67,8 @@ public final class Preflight
 	static final String EXPONENT = "10001";
 	static final String LOCALHOST = "127.0.0.1";
 	static final String JAGEX_HOST = ".jagex.com";
+	/** The game port the client is built for, the one it dials unless patched; our main server listens on it too. */
+	static final int DEFAULT_GAME_PORT = 43594;
 	private static final Pattern HEX = Pattern.compile("[0-9a-fA-F]+");
 	/** RuneLite's RSA keys are 512 hex digits (2048-bit); a server key constant is far longer than any other string. */
 	private static final int KEY_DIGITS = 256;
@@ -112,15 +118,26 @@ public final class Preflight
 		return patches.computeIfAbsent(className, ClassPatch::new);
 	}
 
+	/** {@link #scan(List, String, int)} for a server on the default game port, where the port needs no patch. */
+	public static Preflight scan(List<Path> jars, String modulus) throws IOException
+	{
+		return scan(jars, modulus, DEFAULT_GAME_PORT);
+	}
+
 	/**
 	 * Scans the jars, in the bootstrap's (classpath) order, for the patch points, with {@code modulus} the server's
-	 * RSA modulus in hex. The result's {@link #complete()} says whether every required point was found.
+	 * RSA modulus in hex and {@code gamePort} the port the client must dial. The result's {@link #complete()} says
+	 * whether every required point was found.
 	 */
-	public static Preflight scan(List<Path> jars, String modulus) throws IOException
+	public static Preflight scan(List<Path> jars, String modulus, int gamePort) throws IOException
 	{
 		if (!HEX.matcher(modulus).matches())
 		{
 			throw new IllegalArgumentException("the modulus must be hex");
+		}
+		if (gamePort < 1 || gamePort > 65535)
+		{
+			throw new IllegalArgumentException("not a port: " + gamePort);
 		}
 		Preflight scan = new Preflight();
 		Set<String> seen = new HashSet<>();
@@ -129,6 +146,7 @@ public final class Preflight
 		Map<String, List<String>> exponentClasses = new LinkedHashMap<>();
 		Map<String, byte[]> exponentBytes = new LinkedHashMap<>();
 		Map<String, int[]> localhost = new LinkedHashMap<>();
+		Map<String, Integer> portUses = new LinkedHashMap<>();
 		Map<String, byte[]> named = new LinkedHashMap<>();
 		Map<String, String> jarOf = new LinkedHashMap<>();
 		for (Path jar : jars)
@@ -181,6 +199,10 @@ public final class Preflight
 					{
 						localhost.put(className, countLocalhost(bytes));
 					}
+					if (constants.ints().contains(DEFAULT_GAME_PORT))
+					{
+						portUses.put(className, usesOf(bytes, DEFAULT_GAME_PORT));
+					}
 				}
 			}
 		}
@@ -194,6 +216,7 @@ public final class Preflight
 			scan.report.add(injectedJar + ": " + injectedClasses + " classes scanned");
 			scan.scanModulus(exponentClasses, exponentBytes, modulus);
 			scan.scanLocalhost(localhost);
+			scan.scanPort(portUses, gamePort);
 		}
 		scan.scanClientLoader(named.get(CLIENT_LOADER), jarOf.get(CLIENT_LOADER));
 		scan.scanProperty(named.get(MODULE), MODULE, HTTP_SERVICE_URL, "the world list comes from our server");
@@ -259,6 +282,26 @@ public final class Preflight
 					new ClassPatch.Rule("host check", LOCALHOST, "", null, true, false, counts[1]));
 			}
 		});
+	}
+
+	private void scanPort(Map<String, Integer> portUses, int gamePort)
+	{
+		int uses = portUses.values().stream().mapToInt(Integer::intValue).sum();
+		report.add("game port " + DEFAULT_GAME_PORT + ": " + uses + " use(s) in " + portUses.size() + " class(es), "
+			+ (gamePort == DEFAULT_GAME_PORT ? "kept" : "made " + gamePort));
+		if (gamePort == DEFAULT_GAME_PORT)
+		{
+			return;
+		}
+		if (uses == 0)
+		{
+			missing.add("game port: no " + DEFAULT_GAME_PORT + " constant in the injected client, so it can't be"
+				+ " pointed at port " + gamePort);
+			return;
+		}
+		portUses.forEach((className, count) ->
+			patch(className).addRule(new ClassPatch.Rule("game port", DEFAULT_GAME_PORT, gamePort, null, false, true,
+				count)));
 	}
 
 	private void scanClientLoader(byte[] bytes, String jarName)
@@ -376,8 +419,8 @@ public final class Preflight
 		return false;
 	}
 
-	/** How often a class uses a string constant, in {@code ldc} instructions and constant fields. */
-	private static int usesOf(byte[] bytes, String value)
+	/** How often a class uses a constant (a string or an int), in {@code ldc} instructions and constant fields. */
+	private static int usesOf(byte[] bytes, Object value)
 	{
 		ClassNode node = new ClassNode();
 		new ClassReader(bytes).accept(node, 0);
@@ -425,13 +468,18 @@ public final class Preflight
 		return counts;
 	}
 
-	/** The string constants a class's constant pool holds, which its ldc instructions and constant fields use. */
-	private record Constants(Set<String> strings)
+	/**
+	 * The string and int constants a class's constant pool holds, which its ldc instructions and constant fields use.
+	 * Reading the pool is far cheaper than building a ClassNode, so it decides which of the injected client's classes
+	 * get a full read.
+	 */
+	private record Constants(Set<String> strings, Set<Integer> ints)
 	{
 		static Constants of(ClassReader reader)
 		{
 			char[] buffer = new char[reader.getMaxStringLength()];
 			Set<String> strings = new HashSet<>();
+			Set<Integer> ints = new HashSet<>();
 			for (int i = 1; i < reader.getItemCount(); i++)
 			{
 				int offset = reader.getItem(i);
@@ -439,12 +487,17 @@ public final class Preflight
 				{
 					continue; // the second slot of a long or double
 				}
-				if (reader.readByte(offset - 1) == 8) // CONSTANT_String
+				int tag = reader.readByte(offset - 1);
+				if (tag == 8) // CONSTANT_String
 				{
 					strings.add(reader.readUTF8(offset, buffer));
 				}
+				else if (tag == 3) // CONSTANT_Integer
+				{
+					ints.add(reader.readInt(offset));
+				}
 			}
-			return new Constants(strings);
+			return new Constants(strings, ints);
 		}
 	}
 }

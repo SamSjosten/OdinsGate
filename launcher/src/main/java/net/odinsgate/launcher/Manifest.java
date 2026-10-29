@@ -43,7 +43,7 @@ public final class Manifest
 	 * A hostname or IPv4 address that can form a request URI: dot-separated labels, each starting and ending
 	 * alphanumeric, so "odinsgate..net" or a trailing hyphen can't blow up in HttpRequest later.
 	 */
-	private static final Pattern HOST =
+	static final Pattern HOST =
 		Pattern.compile("[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*");
 	/** A 1024-bit RSA modulus is exactly 256 hex digits, and the server prints it lowercase. */
 	private static final Pattern MODULUS = Pattern.compile("[0-9a-f]{256}");

@@ -9,7 +9,7 @@ Build and test: `./gradlew -p launcher build` (CI's `launcher` job runs the same
 
 ## What's here so far
 
-The core that later PRs build on; no window, downloads or releases yet:
+The core that later PRs build on; no window or releases yet:
 
 - `Manifest`: the signed manifest, the one piece of remote data that decides what runs. CI will publish it as a
   Release asset next to its `.sig` (base64 of the 64-byte Ed25519 signature over the manifest's exact bytes). It
@@ -58,6 +58,18 @@ The core that later PRs build on; no window, downloads or releases yet:
   runs half-patched. The report names jars, classes, methods and counts, never a key. The tests build their own fake
   client with ASM (`FakeClient`), so no RuneLite or Jagex jar is ever in git, and see each patch through its effect
   after loading through the real loader.
+- `LaunchOptions`, `Launch`, `Loader`, `RuntimeConfig` and `StatusFile`: the launch modes. Friends start the launcher
+  with no arguments; the test VM and CI pass `--auto` (no click on Play), `--dev` (developer mode, so the sideloaded
+  test-runner plugin loads), `--home <dir>` (the data folder, so the VM keeps everything under `C:\RSPS`),
+  `--status-file <file>` (a small JSON the VM's scripts wait on instead of the server's `/version`: launcher
+  version, state, revision, game PID) and `--server host:port[:httpPort]` (the staging server; the game port is
+  patched into the client, since a direct connection carries the port itself, and the key stays the manifest's).
+  `Launch` turns a mode into the game's command line and writes RuneLite's runtime config first, in every mode, so
+  RuneLite's remote one can never mark our pin outdated (an empty object, which the spike proved in both modes).
+  `Loader` is the child JVM's entry point: given the jars, key, port and main class it runs the preflight scan,
+  refuses with every gap named (exit 2), or loads RuneLite through the patching loader and calls its main method on
+  a thread of its own, the context class loader set so Swing and plugins find RuneLite's classes. Not here yet: the
+  guard that refuses every host but ours, and the VM scripts (the next PRs).
 
 The spike that proved the patching route on the real jars was PR #113, closed unmerged as planned: nothing of
 RuneLite's or Jagex's enters this repo, in git or in a release.
