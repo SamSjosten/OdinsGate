@@ -23,6 +23,17 @@ jobs:
       - uses: actions/checkout@v4
       - run: deploy/auto-deploy-test.sh
 
+  launcher:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: gradle/actions/setup-gradle@v4
+      - run: ./gradlew -p launcher build
+
   tick-recorder:
     runs-on: ubuntu-latest
     steps:
