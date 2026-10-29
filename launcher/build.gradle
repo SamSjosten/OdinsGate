@@ -53,3 +53,14 @@ test {
 	// The window's panel is tested without a display: Swing's lightweight components work headless, a frame doesn't.
 	systemProperty 'java.awt.headless', 'true'
 }
+
+// The weekly pin health check (.github/workflows/pin-health.yml): every pin in the server's runelite-pins.json still
+// verifies, every jar it names answers a HEAD request, and RuneLite's outdated list doesn't name it. HEAD only: no
+// RuneLite jar is ever downloaded or cached by it. -Ppins=<file> checks another table.
+tasks.register('pinHealth', JavaExec) {
+	group = 'verification'
+	description = 'Checks every RuneLite pin against RuneLite\'s servers (HEAD only, no jar is downloaded).'
+	classpath = sourceSets.main.runtimeClasspath
+	mainClass = 'net.odinsgate.launcher.PinHealth'
+	args '--pins', (findProperty('pins') ?: file('../src/main/resources/runelite-pins.json').path)
+}
