@@ -10,6 +10,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Duration;
@@ -97,6 +98,13 @@ public class WindowRunTest
 			}
 		}
 
+		/** Runs the next queued task only. */
+		void runOne()
+		{
+			assertFalse(tasks.isEmpty(), "a task is queued");
+			tasks.poll().run();
+		}
+
 		/** The one live timer of this kind. */
 		Timer live(boolean repeating)
 		{
@@ -143,6 +151,11 @@ public class WindowRunTest
 	private final FakeWorker worker = new FakeWorker();
 	private final TestClock clock = new TestClock();
 	private final List<Screen.View> views = new ArrayList<>();
+	private final List<String> clipboard = new ArrayList<>();
+	/** How many times the clipboard refuses before it takes the report. */
+	private int clipboardBusy;
+	private static final Map<String, String> SYSTEM = Map.of("os.name", "TestOS", "os.version", "1.0",
+		"java.version", "21.0.1", "java.vendor", "Testers");
 	private Manifest manifest;
 	private Path home;
 
@@ -160,7 +173,39 @@ public class WindowRunTest
 		LauncherRun.Session session =
 			run.session(options, manifest, LINUX, Map.of(), dir.resolve("user-home"), INSTALLED, log);
 		return new WindowRun(new Screen(auto, session.firstRun()), session, notice, worker, Runnable::run, views::add,
-			clock);
+			clock, this::toClipboard, SYSTEM);
+	}
+
+	private void toClipboard(String text)
+	{
+		if (clipboardBusy > 0)
+		{
+			clipboardBusy--;
+			throw new IllegalStateException("cannot open system clipboard");
+		}
+		clipboard.add(text);
+	}
+
+	/** The good manifest with a second pin, for a server that moves to a revision the launcher already knows. */
+	private static Manifest twoPins() throws Exception
+	{
+		String second = "{ \"revision\": 242, \"runelite\": \"1.13.5\", \"commit\": \"" + ManifestTest.COMMIT
+			+ "\", \"bootstrapSha256\": \"" + ManifestTest.SHA256 + "\" }, {";
+		return Manifest.parse(ManifestTest.good().replace("\"pins\": [ {", "\"pins\": [ " + second));
+	}
+
+	/** Up to the game running, with the wait on it still queued on the worker. */
+	private WindowRun runningGame(LauncherRunTest.FakeSteps steps)
+	{
+		WindowRun run = windowRun(steps);
+		run.start();
+		worker.drain();
+		assertEquals(Screen.Phase.READY, last().phase());
+		run.play();
+		worker.runOne();
+		assertEquals(Screen.Phase.RUNNING, last().phase());
+		assertEquals(1, worker.tasks.size(), "the wait on the game is queued, nothing else");
+		return run;
 	}
 
 	private WindowRun windowRun(LauncherRun.Steps steps)
@@ -272,7 +317,7 @@ public class WindowRunTest
 	public void theRetryButtonCallsOffTheScheduledRetry()
 	{
 		LauncherRunTest.FakeSteps steps = new LauncherRunTest.FakeSteps();
-		steps.result = new ServerCheck.Result.Full(50);
+		steps.result = new ServerCheck.Result.Full(241, 50);
 		WindowRun run = windowRun(steps);
 		run.start();
 		worker.drain();
@@ -362,6 +407,184 @@ public class WindowRunTest
 		assertEquals(List.of("STARTING", "CHECKING", "FAILED"), states(), "the log and status file stop too");
 		assertTrue(logBytes.toString(StandardCharsets.UTF_8).contains("FAILED: unexpected: the probe list is empty"),
 			logBytes.toString(StandardCharsets.UTF_8));
+	}
+
+	@Test
+	public void theServerIsWatchedWhileTheGameRunsAndAMovedRevisionRestartsIt() throws Exception
+	{
+		manifest = twoPins();
+		LauncherRunTest.FakeSteps steps = new LauncherRunTest.FakeSteps();
+		steps.status = new ServerCheck.Status(true, true, 241, 3);
+		WindowRun run = runningGame(steps);
+		FakeWorker.Timer watch = worker.live(true);
+		assertEquals(Screen.WATCH_PERIOD, watch.wait);
+		LauncherRunTest.FakeProcess first = steps.game;
+
+		watch.task.run();
+		assertEquals(1, steps.watched);
+		assertEquals("The game is running.", last().status(), "the same revision changes nothing");
+		steps.status = null;
+		watch.task.run();
+		assertEquals("The game is running.", last().status(), "a server that didn't answer changes nothing");
+		steps.status = new ServerCheck.Status(true, true, 242, 2);
+		watch.task.run();
+		assertEquals(Screen.UPDATED_LINE, last().status());
+		assertEquals(Screen.RESTART_LINE, last().detail());
+		assertTrue(last().canPlay());
+		String log = logBytes.toString(StandardCharsets.UTF_8);
+		assertTrue(log.contains("watch: the server is up at revision 242 with 2 player(s), not the 241 the game runs"),
+			log);
+		assertFalse(log.contains("revision 241 with 3 player(s)"), "a look that found nothing new isn't logged");
+
+		views.clear();
+		run.play();
+		assertTrue(first.destroyed, "the running game is closed");
+		assertEquals("Closing the game…", last().status());
+		assertFalse(watch.cancelled, "the watch runs until the game is gone");
+
+		steps.result = new ServerCheck.Result.Ready(242, 2);
+		worker.drain();
+		assertEquals(List.of(Screen.Phase.RUNNING, Screen.Phase.CHECKING, Screen.Phase.DOWNLOADING,
+			Screen.Phase.LAUNCHING, Screen.Phase.EXITED), phases(), "closing, then the launch over, without a click");
+		assertEquals(manifest.pin(242), steps.fetched, "the new revision's pin");
+		assertTrue(steps.game != first, "a new game process");
+		assertTrue(worker.noneLive(), "the watch is called off once the game is gone");
+	}
+
+	@Test
+	public void aRestartOntoAFullServerReportsTheServersRevision() throws Exception
+	{
+		manifest = twoPins();
+		LauncherRunTest.FakeSteps steps = new LauncherRunTest.FakeSteps();
+		steps.status = new ServerCheck.Status(true, true, 242, 2);
+		WindowRun run = runningGame(steps);
+		worker.live(true).task.run();
+		assertEquals(Screen.UPDATED_LINE, last().status());
+		run.play();
+		steps.result = new ServerCheck.Result.Full(242, 50);
+		worker.drain();
+		assertEquals(Screen.Phase.WAITING, last().phase());
+		assertEquals("The server is full (50 players).", last().status());
+
+		run.copyReport(copied -> {});
+		worker.drain();
+		String report = clipboard.get(0);
+		assertTrue(report.lines().anyMatch(line -> line.startsWith("revision 242, pin RuneLite 1.13.5 at ")), report);
+		assertTrue(report.lines().noneMatch(line -> line.startsWith("revision 241")),
+			"the header names the server's revision, not the last game's (which the steps below still mention)");
+	}
+
+	@Test
+	public void aMovedRevisionWithoutAPinStopsAfterTheRestart()
+	{
+		LauncherRunTest.FakeSteps steps = new LauncherRunTest.FakeSteps();
+		steps.status = new ServerCheck.Status(true, true, 242, 2);
+		WindowRun run = runningGame(steps);
+		worker.live(true).task.run();
+		assertEquals(Screen.UPDATED_LINE, last().status());
+		run.play();
+		steps.result = new ServerCheck.Result.Ready(242, 2);
+		worker.drain();
+		assertEquals(Screen.Phase.STOPPED, last().phase());
+		assertEquals("The server was updated.", last().status());
+		assertTrue(last().detail().contains("242"), last().detail());
+		assertTrue(worker.noneLive());
+
+		run.copyReport(copied -> {});
+		worker.drain();
+		String report = clipboard.get(0);
+		assertTrue(report.contains("revision 242\n"), report);
+		assertFalse(report.contains("pin RuneLite"), "the old revision's pin isn't shown next to the new revision");
+	}
+
+	@Test
+	public void theProblemReportGoesToTheClipboardWithoutAPassword() throws Exception
+	{
+		Path gameLog = home.resolve("logs").resolve("game.log");
+		Files.createDirectories(gameLog.getParent());
+		Files.writeString(gameLog, "[loader] 31 jars\n-Dpassword=hunter2 was on the line\nthe game drew a frame\n");
+		Path clientLog = home.resolve("home").resolve(".runelite").resolve("logs").resolve("client.log");
+		Files.createDirectories(clientLog.getParent());
+		Files.writeString(clientLog, "logged in as test\nAuthorization: Bearer abc123\nworld 301\n");
+		LauncherRunTest.FakeSteps steps = new LauncherRunTest.FakeSteps();
+		WindowRun run = windowRun(steps);
+		run.start();
+		worker.drain();
+		run.play();
+		worker.runOne();
+		worker.live(true).task.run();
+
+		Boolean[] done = new Boolean[1];
+		run.copyReport(copied -> done[0] = copied);
+		assertTrue(clipboard.isEmpty(), "the report is built on the worker");
+		worker.drain();
+		assertEquals(Boolean.TRUE, done[0]);
+		assertEquals(1, clipboard.size());
+		String report = clipboard.get(0);
+		assertTrue(report.startsWith(Names.APP_NAME + " problem report, " + AT), report);
+		assertTrue(report.contains("launcher " + Main.VERSION), report);
+		assertTrue(report.contains("system linux/x64, TestOS 1.0, java 21.0.1 (Testers)"), report);
+		assertTrue(report.contains("revision 241, pin RuneLite 1.13.4 at " + ManifestTest.COMMIT), report);
+		assertTrue(report.contains(" CHECKING: "), report);
+		assertTrue(report.contains(" DOWNLOADING: "), report);
+		assertTrue(report.contains(" watch: the server didn't answer\n"), "the look at the server is in it too");
+		assertTrue(report.indexOf(" DOWNLOADING: ") < report.indexOf(" watch: "), "steps first, then the looks");
+		assertTrue(report.contains("the game drew a frame"), report);
+		assertTrue(report.contains("logged in as test"), report);
+		assertTrue(report.contains("world 301"), report);
+		assertFalse(report.contains("hunter2"), report);
+		assertFalse(report.contains("abc123"), report);
+		assertFalse(report.contains("Bearer"), report);
+		assertTrue(report.contains(ProblemReport.LEFT_OUT), report);
+		assertFalse(report.contains(home.toString()), "no folder of the friend's in the report");
+		assertTrue(report.contains("data in <data>"), report);
+	}
+
+	/** Fires every live one-shot timer, oldest first, and runs what it queues. */
+	private void fireTimers()
+	{
+		for (FakeWorker.Timer timer : new ArrayList<>(worker.timers))
+		{
+			if (!timer.repeating && !timer.cancelled)
+			{
+				timer.cancelled = true;
+				timer.task.run();
+				worker.drain();
+			}
+		}
+	}
+
+	@Test
+	public void aClipboardAnotherProgramHoldsIsTriedAgainAMomentLater()
+	{
+		LauncherRunTest.FakeSteps steps = new LauncherRunTest.FakeSteps();
+		WindowRun run = windowRun(steps);
+		run.start();
+		worker.drain();
+
+		clipboardBusy = 2;
+		Boolean[] done = new Boolean[1];
+		run.copyReport(copied -> done[0] = copied);
+		worker.drain();
+		assertNull(done[0], "not given up on, not done either");
+		assertTrue(clipboard.isEmpty());
+		assertEquals(WindowRun.CLIPBOARD_RETRY, worker.timers.get(worker.timers.size() - 1).wait);
+		fireTimers();
+		fireTimers();
+		assertEquals(Boolean.TRUE, done[0]);
+		assertEquals(1, clipboard.size(), "the report got there on the third try");
+
+		clipboardBusy = Integer.MAX_VALUE;
+		done[0] = null;
+		run.copyReport(copied -> done[0] = copied);
+		worker.drain();
+		for (int i = 0; i < WindowRun.CLIPBOARD_TRIES; i++)
+		{
+			fireTimers();
+		}
+		assertEquals(Boolean.FALSE, done[0], "after the last try the button hears it couldn't");
+		assertEquals(1, clipboard.size());
+		assertEquals(Screen.Phase.READY, last().phase(), "the screen is untouched by any of it");
 	}
 
 	@Test

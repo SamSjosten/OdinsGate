@@ -68,6 +68,41 @@ public class MainTest
 	}
 
 	@Test
+	public void theLauncherLogsUnderItsDataFolderAndStillToTheConsole() throws Exception
+	{
+		Path data = dir.resolve("data");
+		try (PrintStream log = Main.openLog(data, out))
+		{
+			log.println("[launcher] STARTING: here");
+		}
+		Path file = data.resolve("logs").resolve("launcher.log");
+		assertEquals("[launcher] STARTING: here" + System.lineSeparator(), Files.readString(file));
+		assertTrue(output().contains("STARTING: here"), output());
+		out.println("still open");
+		assertTrue(output().contains("still open"), "closing the log leaves the console alone");
+
+		try (PrintStream log = Main.openLog(data, out))
+		{
+			log.println("second run");
+		}
+		assertTrue(Files.readString(file).contains("here"), "the log is appended to across runs");
+		assertTrue(Files.readString(file).contains("second run"));
+	}
+
+	@Test
+	public void aDataFolderThatCannotHoldALogLeavesTheConsoleAsTheLog() throws Exception
+	{
+		Path blocked = dir.resolve("blocked");
+		Files.writeString(blocked, "a file where the folder should be");
+		try (PrintStream log = Main.openLog(blocked, out))
+		{
+			log.println("[launcher] CHECKING: anyway");
+		}
+		assertTrue(output().contains("could not be opened"), output());
+		assertTrue(output().contains("CHECKING: anyway"), output());
+	}
+
+	@Test
 	public void theVersionIsNeverEmpty()
 	{
 		assertFalse(Main.VERSION.isBlank());

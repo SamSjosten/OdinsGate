@@ -111,8 +111,21 @@ The core that later PRs build on; no window or releases yet:
   characters on screen, so a line reaches friends without a deploy and while the server is down; a notice that
   can't be fetched is no notice, never a stop. The tests drive the state machine through every outcome, the driver
   over a real `Session` with a hand-cranked worker, and the panel headless; the frame itself opens on a display
-  only, which the installer PRs' `--self-test` will do on each system. The launcher closes with the window for
-  now; staying open through the game's run, with the restart prompt and the problem report, is the next PR.
+  only, which the installer PRs' `--self-test` will do on each system.
+- Staying open, and support: while the game runs the window stays and looks at the server's `/status.json` once a
+  minute (one connection, through `ServerCheck.status`); a revision that moved shows "The server was updated. Click
+  Play to restart the game.", and Play then closes the game and takes the launch from the check again, so a
+  revision the launcher pins already starts straight away and one it doesn't stops with "its update is on its
+  way". The launcher's own lines go to `<data>/logs/launcher.log` as well as the console, and that log and the
+  game's `game.log` are moved aside at 1 MB (`.1` to `.3`, `RotatingLog`) when next opened, so neither grows
+  without end. "Copy problem report" puts on the clipboard what Sam needs in one paste (`ProblemReport`): the
+  system and chip, the launcher's version, the server's revision and its pin, the launcher's last forty steps and
+  checks, and the last sixty lines of `game.log` and of RuneLite's own `client.log`. Never a password: a log line
+  mentioning a password, token, secret or authorization is left out whole, the data folder (which carries the
+  friend's user name) is written as `<data>`, and the command line isn't in it. The tests flip a fake server's
+  revision mid-session through the real `Session` and the hand-cranked driver, both for a pinned and an unpinned
+  revision, and feed the report logs with passwords in them. On the VM, `OdinsGate.cmd` now sends the launcher's
+  console to `logs\console.log`, since `logs\launcher.log` is the launcher's own.
 - The installed layout and the test VM: `installDist` (part of `build`) lays the launcher out the way it is run,
   `build/install/odinsgate-launcher/bin/odinsgate-launcher(.bat)` over `lib/*.jar`, and CI uploads that folder as
   the `odinsgate-launcher` artifact. The test VM runs it from `C:\RSPS\launcher\app` through the `OdinsGate`

@@ -103,6 +103,22 @@ public class ServerCheckTest
 	}
 
 	@Test
+	public void theStatusPageAloneIsReadForTheWatchWhileTheGameRuns() throws Exception
+	{
+		URI probe = URI.create("http://" + LOOPBACK.getHostAddress() + ":" + internet.getAddress().getPort() + "/");
+		ServerCheck live = new ServerCheck(LOOPBACK.getHostAddress(), web.getAddress().getPort(), game.getLocalPort(),
+			TIMEOUT, probe);
+		assertEquals(java.util.Optional.of(new ServerCheck.Status(true, true, 241, 3)), live.status());
+		status = "{\"up\":false,\"revision\":242,\"players\":0,\"acceptingLogins\":false}";
+		assertEquals(java.util.Optional.of(new ServerCheck.Status(false, false, 242, 0)), live.status());
+		status = "<html>a proxy's error page</html>";
+		assertEquals(java.util.Optional.empty(), live.status(), "a page that isn't ours is no answer");
+		ServerCheck dead =
+			new ServerCheck(LOOPBACK.getHostAddress(), deadPort(), game.getLocalPort(), TIMEOUT, probe);
+		assertEquals(java.util.Optional.empty(), dead.status());
+	}
+
+	@Test
 	public void bothPortsUpTheSignedKeyAndAKnownRevisionIsReady() throws Exception
 	{
 		assertEquals(new ServerCheck.Result.Ready(241, 3), check());
@@ -119,7 +135,7 @@ public class ServerCheckTest
 	public void aFullServerIsNotReadyBecauseItsLoginWouldBeRefused() throws Exception
 	{
 		status = status.replace("\"acceptingLogins\":true", "\"acceptingLogins\":false");
-		assertEquals(new ServerCheck.Result.Full(3), check());
+		assertEquals(new ServerCheck.Result.Full(241, 3), check());
 	}
 
 	@Test

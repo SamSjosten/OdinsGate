@@ -15,14 +15,16 @@ import javax.swing.JPanel;
 import javax.swing.JProgressBar;
 import javax.swing.JTextArea;
 import javax.swing.SwingUtilities;
+import javax.swing.Timer;
 import javax.swing.UIManager;
 
 /**
  * The launcher window's one panel, a thin view of a {@link Screen.View}: the status line, the line under it, a
- * progress bar that moves while the launcher is busy, the notice, the first-run line, and the Play and Retry
- * buttons. Every text is shown as it is: the labels have Swing's HTML rendering switched off and the notice is a
- * text area, which never interprets markup, so a notice or a server detail that holds {@code <html>} shows the
- * tag. Nothing here decides anything; {@link WindowRun} does, and calls {@link #render} on the window's thread.
+ * progress bar that moves while the launcher is busy, the notice, the first-run line, the Play and Retry buttons
+ * and "Copy problem report". Every text is shown as it is: the labels have Swing's HTML rendering switched off and
+ * the notice is a text area, which never interprets markup, so a notice or a server detail that holds
+ * {@code <html>} shows the tag. Nothing here decides anything; {@link WindowRun} does, and calls {@link #render}
+ * on the window's thread.
  */
 public final class LauncherPanel extends JPanel
 {
@@ -36,12 +38,21 @@ public final class LauncherPanel extends JPanel
 	private final JLabel firstRun = plain(new JLabel(Screen.FIRST_RUN_LINE));
 	private final JButton play = new JButton("Play");
 	private final JButton retry = new JButton("Retry");
+	private final JButton report = new JButton(REPORT_LABEL);
+	private final Timer reportLabelBack =
+		new Timer(COPIED_FOR_MILLIS, event -> report.setText(REPORT_LABEL));
+
+	static final String REPORT_LABEL = "Copy problem report";
+	static final String COPIED_LABEL = "Copied";
+	static final String NOT_COPIED_LABEL = "Couldn't copy, try again";
+	static final int COPIED_FOR_MILLIS = 3000;
 
 	/**
 	 * @param onPlay what the Play button does
 	 * @param onRetry what the Retry button does
+	 * @param onCopyReport what the "Copy problem report" button does
 	 */
-	public LauncherPanel(Runnable onPlay, Runnable onRetry)
+	public LauncherPanel(Runnable onPlay, Runnable onRetry, Runnable onCopyReport)
 	{
 		super(new BorderLayout());
 		setBorder(BorderFactory.createEmptyBorder(16, 20, 16, 20));
@@ -68,6 +79,8 @@ public final class LauncherPanel extends JPanel
 		retry.setEnabled(false);
 		play.addActionListener(event -> onPlay.run());
 		retry.addActionListener(event -> onRetry.run());
+		report.addActionListener(event -> onCopyReport.run());
+		reportLabelBack.setRepeats(false);
 
 		JPanel lines = new JPanel();
 		lines.setLayout(new BoxLayout(lines, BoxLayout.Y_AXIS));
@@ -79,10 +92,22 @@ public final class LauncherPanel extends JPanel
 		}
 		add(lines, BorderLayout.CENTER);
 
-		JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
-		buttons.add(retry);
-		buttons.add(play);
+		JPanel buttons = new JPanel(new BorderLayout());
+		JPanel left = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+		left.add(report);
+		JPanel right = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
+		right.add(retry);
+		right.add(play);
+		buttons.add(left, BorderLayout.WEST);
+		buttons.add(right, BorderLayout.EAST);
 		add(buttons, BorderLayout.SOUTH);
+	}
+
+	/** The report is on the clipboard, or couldn't be put there: the button says which for a moment. */
+	public void reportCopied(boolean copied)
+	{
+		report.setText(copied ? COPIED_LABEL : NOT_COPIED_LABEL);
+		reportLabelBack.restart();
 	}
 
 	/** Draws {@code view}; on the window's thread. */
@@ -141,6 +166,11 @@ public final class LauncherPanel extends JPanel
 	JButton retryButton()
 	{
 		return retry;
+	}
+
+	JButton reportButton()
+	{
+		return report;
 	}
 
 	JLabel statusLabel()
