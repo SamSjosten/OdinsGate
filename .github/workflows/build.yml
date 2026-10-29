@@ -4,6 +4,9 @@ on:
   push:
     branches: [master, main]
   pull_request:
+  # automerge.yml starts this on a pull request's branch after merging main into it: GitHub runs no workflow for a
+  # push made with a workflow's own token.
+  workflow_dispatch:
 
 jobs:
   build:
