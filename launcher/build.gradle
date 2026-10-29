@@ -50,4 +50,6 @@ assemble.dependsOn installDist
 
 test {
 	useJUnitPlatform()
+	// The window's panel is tested without a display: Swing's lightweight components work headless, a frame doesn't.
+	systemProperty 'java.awt.headless', 'true'
 }
