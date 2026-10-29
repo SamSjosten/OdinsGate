@@ -1,0 +1,175 @@
+// Packaging the launcher for friends (README.md, "Installers"), applied by build.gradle: a jlink runtime that keeps
+// bin/java, jpackage's app image over installDist's jars and the notices, the self-test and the scan run from that
+// image, and the Windows installer (Inno Setup) around it. Every task uses the JDK that runs Gradle (CI's Temurin
+// 21), so the bundled runtime is that JDK's.
+import javax.inject.Inject
+
+def hostOs = System.getProperty('os.name').toLowerCase(Locale.ROOT)
+def onWindows = hostOs.contains('win')
+def onMac = hostOs.contains('mac')
+def jdk = System.getProperty('java.home')
+def exeSuffix = onWindows ? '.exe' : ''
+def appName = 'OdinsGate'
+
+// A JRE as Adoptium ships one, less what a game never needs (JFR, the debugger and management agents, incubators):
+// the modules the spike ran RuneLite 1.13.4 on. java.se is every java.* module; the rest are the JDK's own that a
+// JRE carries, jdk.crypto.ec among them, without which no TLS handshake to GitHub or RuneLite would succeed. jlink
+// stops the build on a name the JDK doesn't have.
+def runtimeModules = ['java.se', 'jdk.accessibility', 'jdk.charsets', 'jdk.crypto.cryptoki', 'jdk.crypto.ec',
+	'jdk.dynalink', 'jdk.httpserver', 'jdk.jsobject', 'jdk.localedata', 'jdk.management', 'jdk.naming.dns',
+	'jdk.naming.rmi', 'jdk.net', 'jdk.nio.mapmode', 'jdk.sctp', 'jdk.security.auth', 'jdk.security.jgss',
+	'jdk.unsupported', 'jdk.unsupported.desktop', 'jdk.xml.dom', 'jdk.zipfs']
+
+// jpackage's layout differs by system: where the executable, the jars (with the notices) and the runtime's home are.
+def imageDir = layout.buildDirectory.dir('image/' + appName + (onMac ? '.app' : '')).get()
+def launcherPath = onWindows ? appName + '.exe' : onMac ? 'Contents/MacOS/' + appName : 'bin/' + appName
+def appFolder = onWindows ? 'app' : onMac ? 'Contents/app' : 'lib/app'
+def runtimeHome = onWindows ? 'runtime' : onMac ? 'Contents/runtime/Contents/Home' : 'lib/runtime'
+
+// jlink without --strip-native-commands, so bin/java stays for the game's child JVM (jpackage's own jlink run
+// strips it, which is why the runtime is made here first); no header files or man pages, resources compressed.
+abstract class RuntimeImage extends DefaultTask
+{
+	@Input abstract Property<String> getJlink()
+	@InputFile abstract RegularFileProperty getJdkRelease()
+	@Input abstract ListProperty<String> getModules()
+	@OutputDirectory abstract DirectoryProperty getOutput()
+	@Inject abstract ExecOperations getExecOperations()
+	@Inject abstract FileSystemOperations getFileSystemOperations()
+
+	@TaskAction
+	void link()
+	{
+		File out = output.get().asFile
+		// jlink refuses a folder that exists.
+		fileSystemOperations.delete { delete(out) }
+		execOperations.exec {
+			executable = jlink.get()
+			args '--add-modules', modules.get().join(','), '--output', out.path,
+				'--no-header-files', '--no-man-pages', '--compress', 'zip-6'
+		}
+	}
+}
+
+// jpackage's app image: the native executable, the jars in the app folder (the main jar's Class-Path names the
+// others, which is how jpackage's launcher finds them) and the runtime above, copied as it is.
+abstract class AppImage extends DefaultTask
+{
+	@Input abstract Property<String> getJpackage()
+	@Input abstract Property<String> getImageName()
+	@Input abstract Property<String> getAppVersion()
+	@Input abstract Property<String> getMainJar()
+	@InputDirectory abstract DirectoryProperty getInput()
+	@InputDirectory abstract DirectoryProperty getRuntime()
+	@OutputDirectory abstract DirectoryProperty getDest()
+	@Inject abstract ExecOperations getExecOperations()
+	@Inject abstract FileSystemOperations getFileSystemOperations()
+
+	@TaskAction
+	void pack()
+	{
+		String version = appVersion.get()
+		if (!(version ==~ /\d+\.\d+\.\d+/))
+		{
+			throw new GradleException("launcher/version.txt says \"$version\"; an app image wants three numbers, "
+				+ 'major.minor.patch')
+		}
+		File out = dest.get().asFile
+		fileSystemOperations.delete { delete(out) }
+		execOperations.exec {
+			executable = jpackage.get()
+			args '--type', 'app-image', '--name', imageName.get(), '--app-version', version,
+				'--vendor', "Odin's Gate", '--description', "Odin's Gate launcher",
+				'--input', input.get().asFile.path, '--main-jar', mainJar.get(),
+				'--main-class', 'net.odinsgate.launcher.Main', '--runtime-image', runtime.get().asFile.path,
+				'--dest', out.path
+		}
+	}
+}
+
+tasks.register('runtimeImage', RuntimeImage) {
+	group = 'distribution'
+	description = 'The bundled Java runtime: jlink over this JDK, keeping bin/java for the game.'
+	jlink = "$jdk/bin/jlink$exeSuffix"
+	jdkRelease = file("$jdk/release")
+	modules = runtimeModules
+	output = layout.buildDirectory.dir('runtime')
+}
+
+tasks.register('packageInput', Sync) {
+	description = "What goes into the app image's app folder: installDist's jars and the notices."
+	dependsOn 'installDist'
+	from layout.buildDirectory.dir('install/odinsgate-launcher/lib')
+	from 'THIRD-PARTY-NOTICES.txt'
+	into layout.buildDirectory.dir('package-input')
+}
+
+tasks.register('appImage', AppImage) {
+	group = 'distribution'
+	description = "jpackage's app image in build/image: the executable, the jars, the notices and the runtime."
+	dependsOn 'packageInput'
+	jpackage = "$jdk/bin/jpackage$exeSuffix"
+	imageName.set(appName)
+	appVersion = project.version.toString()
+	mainJar = "odinsgate-launcher-${project.version}.jar"
+	input = layout.buildDirectory.dir('package-input')
+	runtime = tasks.named('runtimeImage', RuntimeImage).flatMap { it.output }
+	dest = layout.buildDirectory.dir('image')
+}
+
+// The image's own --self-test (SelfTest.java): its runtime starts the game's child JVM against a fake server here,
+// and the window opens where there is a display. Its log is printed after, since the Windows executable has no
+// console to print to.
+tasks.register('appImageSelfTest', Exec) {
+	group = 'verification'
+	description = "Runs the app image's --self-test from its executable."
+	dependsOn 'appImage'
+	def home = layout.buildDirectory.dir('self-test-home').get().asFile
+	executable = imageDir.file(launcherPath).asFile.path
+	args '--self-test', '--home', home.path
+	ignoreExitValue = true
+	outputs.upToDateWhen { false }
+	def printLog = onWindows
+	doLast {
+		File log = new File(home, 'logs/launcher.log')
+		if (printLog && log.isFile())
+		{
+			println log.text
+		}
+		int code = executionResult.get().exitValue
+		if (code != 0)
+		{
+			throw new GradleException("the app image's self-test exited with $code (its log is above)")
+		}
+	}
+}
+
+// ImageScan.java over the image, run from the image's own runtime and jar: names, content, jars, runtime, notices.
+tasks.register('appImageScan', Exec) {
+	group = 'verification'
+	description = 'Scans the app image for anything that must not ship, with its own runtime.'
+	dependsOn 'appImage'
+	executable = imageDir.dir(runtimeHome).file("bin/java$exeSuffix").asFile.path
+	args '-cp', imageDir.dir(appFolder).file("odinsgate-launcher-${project.version}.jar").asFile.path,
+		'net.odinsgate.launcher.ImageScan', '--image', imageDir.asFile.path,
+		'--allowed', file('package/allowed-jars.txt').path
+	inputs.dir imageDir
+	inputs.file 'package/allowed-jars.txt'
+	outputs.upToDateWhen { false }
+}
+
+// The per-user installer around the image, OdinsGate-Setup.exe in build/installer, made with Inno Setup
+// (package/windows/OdinsGate.iss); -Piscc=<path to ISCC.exe> when it isn't where the GitHub runner has it.
+tasks.register('windowsInstaller', Exec) {
+	group = 'distribution'
+	description = 'The Windows installer around the app image (Windows only).'
+	dependsOn 'appImage'
+	onlyIf('the Windows installer is made on Windows') { onWindows }
+	def outDir = layout.buildDirectory.dir('installer').get().asFile
+	executable = findProperty('iscc') ?: 'C:/Program Files (x86)/Inno Setup 6/ISCC.exe'
+	args "/DAppVersion=${project.version}", "/DAppImage=${imageDir.asFile.path}", "/DOutputDir=${outDir.path}",
+		file('package/windows/OdinsGate.iss').path
+	inputs.dir imageDir
+	inputs.file 'package/windows/OdinsGate.iss'
+	outputs.dir outDir
+}
