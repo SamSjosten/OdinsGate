@@ -116,6 +116,13 @@ public class ServerCheckTest
 	}
 
 	@Test
+	public void aFullServerIsNotReadyBecauseItsLoginWouldBeRefused() throws Exception
+	{
+		status = status.replace("\"acceptingLogins\":true", "\"acceptingLogins\":false");
+		assertEquals(new ServerCheck.Result.Full(3), check());
+	}
+
+	@Test
 	public void aStatusPageThatIsntOursIsOffline() throws Exception
 	{
 		status = "<html>some proxy's error page</html>";

@@ -64,6 +64,11 @@ public final class ServerCheck
 		{
 		}
 
+		/** The game is up but at its player limit, so a login would be refused: "The server is full." */
+		record Full(int players) implements Result
+		{
+		}
+
 		/** Neither our server nor the probe answers: "Check your connection." */
 		record NoInternet() implements Result
 		{
@@ -92,12 +97,14 @@ public final class ServerCheck
 			return offlineUnless(e);
 		}
 		boolean up;
+		boolean acceptingLogins;
 		int revision;
 		int players;
 		try
 		{
 			JsonObject parsed = JsonParser.parseString(status).getAsJsonObject();
 			up = parsed.get("up").getAsBoolean();
+			acceptingLogins = parsed.get("acceptingLogins").getAsBoolean();
 			revision = parsed.get("revision").getAsInt();
 			players = parsed.get("players").getAsInt();
 		}
@@ -109,6 +116,11 @@ public final class ServerCheck
 		if (!up)
 		{
 			return new Result.Offline("the server is still starting");
+		}
+		if (!acceptingLogins)
+		{
+			// Up, but at its player limit: a launch now ends at a refused login, so say what is really wrong.
+			return new Result.Full(players);
 		}
 		try (Socket game = new Socket())
 		{

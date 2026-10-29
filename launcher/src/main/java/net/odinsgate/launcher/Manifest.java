@@ -39,7 +39,12 @@ public final class Manifest
 
 	/** Dotted digits, such as 0.1.0: comparable, and safe inside a folder name (versions/0.1.0/). */
 	private static final Pattern VERSION = Pattern.compile("\\d+(\\.\\d+)*");
-	private static final Pattern HOST = Pattern.compile("[A-Za-z0-9][A-Za-z0-9.-]*");
+	/**
+	 * A hostname or IPv4 address that can form a request URI: dot-separated labels, each starting and ending
+	 * alphanumeric, so "odinsgate..net" or a trailing hyphen can't blow up in HttpRequest later.
+	 */
+	private static final Pattern HOST =
+		Pattern.compile("[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*");
 	/** A 1024-bit RSA modulus is exactly 256 hex digits, and the server prints it lowercase. */
 	private static final Pattern MODULUS = Pattern.compile("[0-9a-f]{256}");
 	private static final Pattern COMMIT = Pattern.compile("[0-9a-f]{40}");
