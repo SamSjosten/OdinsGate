@@ -206,6 +206,7 @@ public class LauncherRunTest
 		assertEquals(StatusFile.State.EXITED, status.state());
 		assertEquals("0.1.0", status.version());
 		assertEquals(241, status.revision());
+		assertEquals(4321L, status.gamePid(), "the PID of the game that ran stays in the status after its exit");
 		assertEquals(AT, status.at());
 		assertTrue(logBytes.toString(StandardCharsets.UTF_8).contains("RUNNING: game process 4321"),
 			logBytes.toString(StandardCharsets.UTF_8));
@@ -241,6 +242,10 @@ public class LauncherRunTest
 			StatusFile.Status status = StatusFile.read(statusFile);
 			assertEquals(StatusFile.State.FAILED, status.state(), entry.getKey().toString());
 			assertEquals(LauncherRun.reason(entry.getKey()), status.detail());
+			// The one outcome that knows the revision records it, so a script can tell which pin is missing.
+			Integer revision = entry.getKey() instanceof ServerCheck.Result.UnknownRevision u ? u.revision() : null;
+			assertEquals(revision, status.revision(), entry.getKey().toString());
+			assertNull(status.gamePid(), entry.getKey().toString());
 		}
 		assertTrue(LauncherRun.reason(new ServerCheck.Result.Offline("x")).contains("offline"));
 		assertTrue(LauncherRun.reason(new ServerCheck.Result.UnknownRevision(242)).contains("242"));
@@ -253,7 +258,9 @@ public class LauncherRunTest
 		steps.result = new ServerCheck.Result.Ready(242, 1);
 		assertEquals(LauncherRun.EXIT_UNKNOWN_REVISION, run(options(), steps));
 		assertNull(steps.fetched);
-		assertTrue(StatusFile.read(statusFile).detail().contains("242"));
+		StatusFile.Status status = StatusFile.read(statusFile);
+		assertTrue(status.detail().contains("242"));
+		assertEquals(242, status.revision());
 	}
 
 	@Test

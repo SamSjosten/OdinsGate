@@ -105,15 +105,20 @@ public final class LauncherRun
 		ServerCheck.Result result = steps.check(server, manifest);
 		if (!(result instanceof ServerCheck.Result.Ready ready))
 		{
+			if (result instanceof ServerCheck.Result.UnknownRevision unknown)
+			{
+				// The revision is known even though it stops the launch: the status file says which one.
+				report.revision = unknown.revision();
+			}
 			return report.fail(exitCode(result), reason(result));
 		}
+		report.revision = ready.revision();
 		Manifest.Pin pin = manifest.pin(ready.revision());
 		if (pin == null)
 		{
 			// ServerCheck reports an unpinned revision itself; this only guards a Steps that doesn't.
 			return report.fail(EXIT_UNKNOWN_REVISION, reason(new ServerCheck.Result.UnknownRevision(ready.revision())));
 		}
-		report.revision = ready.revision();
 
 		report.state(StatusFile.State.DOWNLOADING, "RuneLite " + pin.runelite() + " for revision " + ready.revision()
 			+ " (" + pin.commit().substring(0, 12) + ")");
@@ -141,7 +146,8 @@ public final class LauncherRun
 		{
 			return report.fail(EXIT_START, "the game could not be started: " + e.getMessage());
 		}
-		report.state(StatusFile.State.RUNNING, "game process " + game.pid() + ", its log in " + gameLog, game.pid());
+		report.gamePid = game.pid();
+		report.state(StatusFile.State.RUNNING, "game process " + game.pid() + ", its log in " + gameLog);
 
 		int exit;
 		try
@@ -188,13 +194,17 @@ public final class LauncherRun
 		};
 	}
 
-	/** Each state to the log and, when asked for, the status file; a status file that can't be written never stops
-	 * a launch, it is logged. */
+	/**
+	 * Each state to the log and, when asked for, the status file. The revision and the game's PID stay in every
+	 * state after the one that learned them, so a reader that missed a short-lived state still sees them; a status
+	 * file that can't be written never stops a launch, it is logged.
+	 */
 	private final class Reporter
 	{
 		private final Path statusFile;
 		private final PrintStream log;
 		Integer revision;
+		Long gamePid;
 
 		Reporter(Path statusFile, PrintStream log)
 		{
@@ -203,11 +213,6 @@ public final class LauncherRun
 		}
 
 		void state(StatusFile.State state, String detail)
-		{
-			state(state, detail, null);
-		}
-
-		void state(StatusFile.State state, String detail, Long gamePid)
 		{
 			log.println("[launcher] " + state + ": " + detail);
 			if (statusFile == null)
