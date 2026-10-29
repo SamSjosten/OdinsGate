@@ -152,6 +152,8 @@ public class WindowRunTest
 	private final TestClock clock = new TestClock();
 	private final List<Screen.View> views = new ArrayList<>();
 	private final List<String> clipboard = new ArrayList<>();
+	/** How many times the clipboard refuses before it takes the report. */
+	private int clipboardBusy;
 	private static final Map<String, String> SYSTEM = Map.of("os.name", "TestOS", "os.version", "1.0",
 		"java.version", "21.0.1", "java.vendor", "Testers");
 	private Manifest manifest;
@@ -171,7 +173,17 @@ public class WindowRunTest
 		LauncherRun.Session session =
 			run.session(options, manifest, LINUX, Map.of(), dir.resolve("user-home"), INSTALLED, log);
 		return new WindowRun(new Screen(auto, session.firstRun()), session, notice, worker, Runnable::run, views::add,
-			clock, clipboard::add, SYSTEM);
+			clock, this::toClipboard, SYSTEM);
+	}
+
+	private void toClipboard(String text)
+	{
+		if (clipboardBusy > 0)
+		{
+			clipboardBusy--;
+			throw new IllegalStateException("cannot open system clipboard");
+		}
+		clipboard.add(text);
 	}
 
 	/** The good manifest with a second pin, for a server that moves to a revision the launcher already knows. */
@@ -454,7 +466,7 @@ public class WindowRunTest
 		assertEquals(Screen.Phase.WAITING, last().phase());
 		assertEquals("The server is full (50 players).", last().status());
 
-		run.copyReport(() -> {});
+		run.copyReport(copied -> {});
 		worker.drain();
 		String report = clipboard.get(0);
 		assertTrue(report.lines().anyMatch(line -> line.startsWith("revision 242, pin RuneLite 1.13.5 at ")), report);
@@ -478,7 +490,7 @@ public class WindowRunTest
 		assertTrue(last().detail().contains("242"), last().detail());
 		assertTrue(worker.noneLive());
 
-		run.copyReport(() -> {});
+		run.copyReport(copied -> {});
 		worker.drain();
 		String report = clipboard.get(0);
 		assertTrue(report.contains("revision 242\n"), report);
@@ -502,11 +514,11 @@ public class WindowRunTest
 		worker.runOne();
 		worker.live(true).task.run();
 
-		boolean[] done = new boolean[1];
-		run.copyReport(() -> done[0] = true);
+		Boolean[] done = new Boolean[1];
+		run.copyReport(copied -> done[0] = copied);
 		assertTrue(clipboard.isEmpty(), "the report is built on the worker");
 		worker.drain();
-		assertTrue(done[0]);
+		assertEquals(Boolean.TRUE, done[0]);
 		assertEquals(1, clipboard.size());
 		String report = clipboard.get(0);
 		assertTrue(report.startsWith(Names.APP_NAME + " problem report, " + AT), report);
@@ -526,6 +538,53 @@ public class WindowRunTest
 		assertTrue(report.contains(ProblemReport.LEFT_OUT), report);
 		assertFalse(report.contains(home.toString()), "no folder of the friend's in the report");
 		assertTrue(report.contains("data in <data>"), report);
+	}
+
+	/** Fires every live one-shot timer, oldest first, and runs what it queues. */
+	private void fireTimers()
+	{
+		for (FakeWorker.Timer timer : new ArrayList<>(worker.timers))
+		{
+			if (!timer.repeating && !timer.cancelled)
+			{
+				timer.cancelled = true;
+				timer.task.run();
+				worker.drain();
+			}
+		}
+	}
+
+	@Test
+	public void aClipboardAnotherProgramHoldsIsTriedAgainAMomentLater()
+	{
+		LauncherRunTest.FakeSteps steps = new LauncherRunTest.FakeSteps();
+		WindowRun run = windowRun(steps);
+		run.start();
+		worker.drain();
+
+		clipboardBusy = 2;
+		Boolean[] done = new Boolean[1];
+		run.copyReport(copied -> done[0] = copied);
+		worker.drain();
+		assertNull(done[0], "not given up on, not done either");
+		assertTrue(clipboard.isEmpty());
+		assertEquals(WindowRun.CLIPBOARD_RETRY, worker.timers.get(worker.timers.size() - 1).wait);
+		fireTimers();
+		fireTimers();
+		assertEquals(Boolean.TRUE, done[0]);
+		assertEquals(1, clipboard.size(), "the report got there on the third try");
+
+		clipboardBusy = Integer.MAX_VALUE;
+		done[0] = null;
+		run.copyReport(copied -> done[0] = copied);
+		worker.drain();
+		for (int i = 0; i < WindowRun.CLIPBOARD_TRIES; i++)
+		{
+			fireTimers();
+		}
+		assertEquals(Boolean.FALSE, done[0], "after the last try the button hears it couldn't");
+		assertEquals(1, clipboard.size());
+		assertEquals(Screen.Phase.READY, last().phase(), "the screen is untouched by any of it");
 	}
 
 	@Test

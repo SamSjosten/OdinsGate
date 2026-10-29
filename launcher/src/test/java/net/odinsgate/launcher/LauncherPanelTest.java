@@ -108,8 +108,11 @@ public class LauncherPanelTest
 			false));
 		assertTrue(panel.reportButton().isEnabled());
 		assertEquals(LauncherPanel.REPORT_LABEL, panel.reportButton().getText());
-		panel.reportCopied();
+		panel.reportCopied(true);
 		assertEquals(LauncherPanel.COPIED_LABEL, panel.reportButton().getText());
+		panel.reportCopied(false);
+		assertEquals(LauncherPanel.NOT_COPIED_LABEL, panel.reportButton().getText());
+		assertTrue(panel.reportButton().isEnabled(), "and it can be tried again");
 	}
 
 	@Test

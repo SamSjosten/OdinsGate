@@ -44,6 +44,7 @@ public final class LauncherPanel extends JPanel
 
 	static final String REPORT_LABEL = "Copy problem report";
 	static final String COPIED_LABEL = "Copied";
+	static final String NOT_COPIED_LABEL = "Couldn't copy, try again";
 	static final int COPIED_FOR_MILLIS = 3000;
 
 	/**
@@ -102,10 +103,10 @@ public final class LauncherPanel extends JPanel
 		add(buttons, BorderLayout.SOUTH);
 	}
 
-	/** The report is on the clipboard: the button says so for a moment. */
-	public void reportCopied()
+	/** The report is on the clipboard, or couldn't be put there: the button says which for a moment. */
+	public void reportCopied(boolean copied)
 	{
-		report.setText(COPIED_LABEL);
+		report.setText(copied ? COPIED_LABEL : NOT_COPIED_LABEL);
 		reportLabelBack.restart();
 	}
 

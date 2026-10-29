@@ -83,6 +83,9 @@ public final class WindowRun
 
 	/** How often the countdown of a failed check is redrawn. */
 	static final Duration TICK = Duration.ofSeconds(1);
+	/** How many times, how far apart, a clipboard that another program holds is tried. */
+	static final int CLIPBOARD_TRIES = 4;
+	static final Duration CLIPBOARD_RETRY = Duration.ofMillis(250);
 
 	private final Screen screen;
 	private final LauncherRun.Session session;
@@ -150,21 +153,38 @@ public final class WindowRun
 
 	/**
 	 * The "Copy problem report" button, on the window's thread: the report is put together on the worker (it reads
-	 * the logs) and handed to the clipboard back here, then {@code done} runs.
+	 * the logs) and handed to the clipboard back here, then {@code done} hears whether it got there. A clipboard
+	 * another program holds at that moment (Windows refuses with an {@link IllegalStateException}) is tried again
+	 * a few times, a moment apart, before the button says it couldn't.
 	 */
-	public void copyReport(Runnable done)
+	public void copyReport(Consumer<Boolean> done)
 	{
 		worker.run(() ->
 		{
 			String report = ProblemReport.build(session.platform(), system, version(), session.revision(),
 				session.pin(), session.recent(), session.dataDir(), session.gameLog(), session.clientLog(),
 				clock.instant());
-			ui.later(() ->
-			{
-				clipboard.accept(report);
-				done.run();
-			});
+			ui.later(() -> paste(report, CLIPBOARD_TRIES, done));
 		});
+	}
+
+	private void paste(String report, int triesLeft, Consumer<Boolean> done)
+	{
+		try
+		{
+			clipboard.accept(report);
+		}
+		catch (RuntimeException e)
+		{
+			if (triesLeft > 1)
+			{
+				worker.after(CLIPBOARD_RETRY, () -> ui.later(() -> paste(report, triesLeft - 1, done)));
+				return;
+			}
+			done.accept(false);
+			return;
+		}
+		done.accept(true);
 	}
 
 	private String version()
