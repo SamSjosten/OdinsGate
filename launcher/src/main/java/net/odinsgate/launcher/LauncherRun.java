@@ -232,7 +232,8 @@ public final class LauncherRun
 			case ServerCheck.Result.Ready ready -> "the server is up at revision " + ready.revision() + " with "
 				+ ready.players() + " player(s)";
 			case ServerCheck.Result.Offline offline -> "the server is offline: " + offline.detail();
-			case ServerCheck.Result.Full full -> "the server is full (" + full.players() + " players)";
+			case ServerCheck.Result.Full full -> "the server is full (" + full.players() + " players) at revision "
+				+ full.revision();
 			case ServerCheck.Result.NoInternet noInternet -> "no internet: neither the server nor the probe answers";
 			case ServerCheck.Result.UnknownRevision unknown -> "the server runs revision " + unknown.revision()
 				+ ", which this launcher has no pin for yet";
@@ -345,6 +346,14 @@ public final class LauncherRun
 					report.revision = unknown.revision();
 					revision = unknown.revision();
 					pin = null;
+				}
+				else if (result instanceof ServerCheck.Result.Full full)
+				{
+					// Known too, with whatever pin the manifest has for it, so a report after a restart onto a full
+					// server names the server's revision rather than the last game's.
+					report.revision = full.revision();
+					revision = full.revision();
+					pin = manifest.pin(full.revision());
 				}
 				report.fail(reason(result));
 				return result;

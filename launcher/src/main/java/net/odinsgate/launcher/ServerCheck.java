@@ -71,8 +71,12 @@ public final class ServerCheck
 		{
 		}
 
-		/** The game is up but at its player limit, so a login would be refused: "The server is full." */
-		record Full(int players) implements Result
+		/**
+		 * The game is up, at {@code revision}, but at its player limit, so a login would be refused: "The server is
+		 * full." The revision is carried so a report after a restart onto a full server names the server's, not the
+		 * one the last game ran.
+		 */
+		record Full(int revision, int players) implements Result
 		{
 		}
 
@@ -120,7 +124,7 @@ public final class ServerCheck
 		if (!status.acceptingLogins())
 		{
 			// Up, but at its player limit: a launch now ends at a refused login, so say what is really wrong.
-			return new Result.Full(status.players());
+			return new Result.Full(status.revision(), status.players());
 		}
 		int revision = status.revision();
 		int players = status.players();

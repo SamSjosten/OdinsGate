@@ -239,7 +239,7 @@ public class LauncherRunTest
 	{
 		Map<ServerCheck.Result, Integer> codes = Map.of(
 			new ServerCheck.Result.Offline("the game port doesn't answer"), LauncherRun.EXIT_OFFLINE,
-			new ServerCheck.Result.Full(50), LauncherRun.EXIT_FULL,
+			new ServerCheck.Result.Full(241, 50), LauncherRun.EXIT_FULL,
 			new ServerCheck.Result.NoInternet(), LauncherRun.EXIT_NO_INTERNET,
 			new ServerCheck.Result.UnknownRevision(242), LauncherRun.EXIT_UNKNOWN_REVISION,
 			new ServerCheck.Result.KeyChanged(), LauncherRun.EXIT_KEY_CHANGED);
@@ -253,8 +253,13 @@ public class LauncherRunTest
 			StatusFile.Status status = StatusFile.read(statusFile);
 			assertEquals(StatusFile.State.FAILED, status.state(), entry.getKey().toString());
 			assertEquals(LauncherRun.reason(entry.getKey()), status.detail());
-			// The one outcome that knows the revision records it, so a script can tell which pin is missing.
-			Integer revision = entry.getKey() instanceof ServerCheck.Result.UnknownRevision u ? u.revision() : null;
+			// The outcomes that know the revision record it, so a script can tell which pin is missing.
+			Integer revision = switch (entry.getKey())
+			{
+				case ServerCheck.Result.UnknownRevision u -> u.revision();
+				case ServerCheck.Result.Full f -> f.revision();
+				default -> null;
+			};
 			assertEquals(revision, status.revision(), entry.getKey().toString());
 			assertNull(status.gamePid(), entry.getKey().toString());
 		}

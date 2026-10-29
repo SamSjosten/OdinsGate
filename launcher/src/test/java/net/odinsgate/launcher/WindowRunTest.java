@@ -305,7 +305,7 @@ public class WindowRunTest
 	public void theRetryButtonCallsOffTheScheduledRetry()
 	{
 		LauncherRunTest.FakeSteps steps = new LauncherRunTest.FakeSteps();
-		steps.result = new ServerCheck.Result.Full(50);
+		steps.result = new ServerCheck.Result.Full(241, 50);
 		WindowRun run = windowRun(steps);
 		run.start();
 		worker.drain();
@@ -437,6 +437,29 @@ public class WindowRunTest
 		assertEquals(manifest.pin(242), steps.fetched, "the new revision's pin");
 		assertTrue(steps.game != first, "a new game process");
 		assertTrue(worker.noneLive(), "the watch is called off once the game is gone");
+	}
+
+	@Test
+	public void aRestartOntoAFullServerReportsTheServersRevision() throws Exception
+	{
+		manifest = twoPins();
+		LauncherRunTest.FakeSteps steps = new LauncherRunTest.FakeSteps();
+		steps.status = new ServerCheck.Status(true, true, 242, 2);
+		WindowRun run = runningGame(steps);
+		worker.live(true).task.run();
+		assertEquals(Screen.UPDATED_LINE, last().status());
+		run.play();
+		steps.result = new ServerCheck.Result.Full(242, 50);
+		worker.drain();
+		assertEquals(Screen.Phase.WAITING, last().phase());
+		assertEquals("The server is full (50 players).", last().status());
+
+		run.copyReport(() -> {});
+		worker.drain();
+		String report = clipboard.get(0);
+		assertTrue(report.lines().anyMatch(line -> line.startsWith("revision 242, pin RuneLite 1.13.5 at ")), report);
+		assertTrue(report.lines().noneMatch(line -> line.startsWith("revision 241")),
+			"the header names the server's revision, not the last game's (which the steps below still mention)");
 	}
 
 	@Test

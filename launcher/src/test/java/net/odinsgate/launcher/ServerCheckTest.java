@@ -135,7 +135,7 @@ public class ServerCheckTest
 	public void aFullServerIsNotReadyBecauseItsLoginWouldBeRefused() throws Exception
 	{
 		status = status.replace("\"acceptingLogins\":true", "\"acceptingLogins\":false");
-		assertEquals(new ServerCheck.Result.Full(3), check());
+		assertEquals(new ServerCheck.Result.Full(241, 3), check());
 	}
 
 	@Test

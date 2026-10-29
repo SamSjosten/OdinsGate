@@ -113,7 +113,7 @@ public class ScreenTest
 		Screen screen = new Screen(false, false);
 		screen.start();
 		assertEquals(List.of(new Screen.Command.RetryAfter(Screen.RETRY_WAIT)),
-			screen.on(checked(new ServerCheck.Result.Full(50), T0)));
+			screen.on(checked(new ServerCheck.Result.Full(241, 50), T0)));
 		assertEquals("The server is full (50 players).", screen.view().status());
 		assertEquals("Trying again in 30 seconds.", screen.view().detail());
 		assertTrue(screen.view().canRetry());
