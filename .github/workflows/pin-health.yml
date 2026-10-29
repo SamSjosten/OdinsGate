@@ -38,8 +38,12 @@ jobs:
           java-version: "21"
       - uses: gradle/actions/setup-gradle@v4
       - id: check
-        # On a pull request the failing step fails the check; on a schedule the alert step below reports it.
+        # On a pull request the failing step fails the check; on a schedule the alert step below reports it. bash
+        # for pipefail, so tee can't hide the check's exit code (the unnamed shell has no pipefail); its own time
+        # limit, under the job's, leaves the job time to report a repository that stopped answering.
         continue-on-error: ${{ github.event_name != 'pull_request' }}
+        timeout-minutes: 10
+        shell: bash
         run: ./gradlew -q -p launcher pinHealth | tee pin-health.txt
       - uses: actions/github-script@v7
         if: always() && github.event_name != 'pull_request'
@@ -48,9 +52,10 @@ jobs:
             const fs = require('fs');
             const lines = fs.existsSync('pin-health.txt') ? fs.readFileSync('pin-health.txt', 'utf8').trim() : '';
             const failed = lines.split('\n').filter(line => /^(FAIL|pin health)/.test(line));
+            const noVerdict = 'The check ended without a verdict (out of time, or Gradle failed); its last lines:\n';
             await require('./.github/scripts/alert.js')({ github, context, core }, {
               key: 'pin-health',
               title: 'A RuneLite pin is no longer healthy',
               healthy: '${{ steps.check.outcome }}' === 'success',
-              detail: (failed.length ? failed : lines.split('\n').slice(-5)).join('\n'),
+              detail: failed.length ? failed.join('\n') : noVerdict + lines.split('\n').slice(-5).join('\n'),
             });

@@ -17,6 +17,7 @@ import java.nio.file.Path;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
 import java.security.Signature;
+import java.time.Duration;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -277,6 +278,33 @@ public class PinHealthTest
 			List.of(RUNELITE.getPublic()), out);
 		assertEquals(1, code, output());
 		assertTrue(output().contains("FAIL revision 241 (RuneLite 1.13.4 at cdcdcdcd): "), output());
+	}
+
+	@Test
+	public void aRepositoryThatAcceptsAndNeverAnswersFailsAfterItsOwnShortTimeout() throws Exception
+	{
+		try (java.net.ServerSocket silent = new java.net.ServerSocket(0, 50, LOOPBACK))
+		{
+			// A bootstrap whose one jar sits on the silent port; the other checks are as before.
+			String silentJar = "{\"name\":\"client.jar\",\"path\":\"http://" + LOOPBACK.getHostAddress() + ":"
+				+ silent.getLocalPort() + "/client.jar\",\"size\":" + CLIENT_JAR.length + ",\"hash\":\""
+				+ RuneLiteCache.sha256(CLIENT_JAR) + "\"}";
+			byte[] bootstrap = ("{\"version\":\"1.13.4\",\"clientJvm17Arguments\":[],\"artifacts\":["
+				+ silentJar + "]}").getBytes(StandardCharsets.UTF_8);
+			served.put("/static/" + COMMIT + "/bootstrap.json", bootstrap);
+			served.put("/static/" + COMMIT + "/bootstrap.json.sha256", sign(RUNELITE, bootstrap));
+			List<Manifest.Pin> table =
+				List.of(new Manifest.Pin(241, "1.13.4", COMMIT, RuneLiteCache.sha256(bootstrap)));
+			long started = System.nanoTime();
+			boolean healthy = new PinHealth(base + "/static/", base + "/config.json", List.of(RUNELITE.getPublic()),
+				Duration.ofSeconds(5), Duration.ofMillis(300), out).check(table);
+			long tookMillis = (System.nanoTime() - started) / 1_000_000;
+			assertFalse(healthy, output());
+			assertTrue(output().contains("FAIL revision 241 (RuneLite 1.13.4 at cdcdcdcd): client.jar at http://"),
+				output());
+			assertTrue(tookMillis < 4000, "the jar's own timeout, not the download one: " + tookMillis + " ms");
+			assertTrue(output().contains("doesn't list 1.13.4 as outdated"), "the rest still ran: " + output());
+		}
 	}
 
 	@Test

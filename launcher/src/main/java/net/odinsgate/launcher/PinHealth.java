@@ -39,7 +39,13 @@ public final class PinHealth
 	 * RuneLite thinks of our pin, not something a friend sees.
 	 */
 	static final String DEFAULT_CONFIG_URL = "https://static.runelite.net/config.json";
+	/** For the two downloads (the bootstrap and the config). */
 	static final Duration TIMEOUT = Duration.ofSeconds(30);
+	/**
+	 * For each jar's HEAD: a repository that accepts and never answers must not eat the workflow's time limit one jar
+	 * at a time (43 jars at revision 241), or the alert step never runs.
+	 */
+	static final Duration HEAD_TIMEOUT = Duration.ofSeconds(10);
 	static final String USAGE = "usage: PinHealth --pins <runelite-pins.json> [--static-base <url>] [--config <url>]";
 
 	private static final Pattern COMMIT = Pattern.compile("[0-9a-f]{40}");
@@ -49,15 +55,18 @@ public final class PinHealth
 	private final String configUrl;
 	private final List<PublicKey> runeliteKeys;
 	private final Duration timeout;
+	private final Duration headTimeout;
 	private final HttpClient http;
 	private final PrintStream out;
 
-	PinHealth(String staticBase, String configUrl, List<PublicKey> runeliteKeys, Duration timeout, PrintStream out)
+	PinHealth(String staticBase, String configUrl, List<PublicKey> runeliteKeys, Duration timeout,
+		Duration headTimeout, PrintStream out)
 	{
 		this.staticBase = staticBase;
 		this.configUrl = configUrl;
 		this.runeliteKeys = runeliteKeys;
 		this.timeout = timeout;
+		this.headTimeout = headTimeout;
 		this.out = out;
 		this.http = HttpClient.newBuilder().connectTimeout(timeout).followRedirects(HttpClient.Redirect.NORMAL).build();
 	}
@@ -109,7 +118,7 @@ public final class PinHealth
 			out.println(pins + ": " + e.getMessage());
 			return 2;
 		}
-		return new PinHealth(staticBase, configUrl, keys, TIMEOUT, out).check(table) ? 0 : 1;
+		return new PinHealth(staticBase, configUrl, keys, TIMEOUT, HEAD_TIMEOUT, out).check(table) ? 0 : 1;
 	}
 
 	/** Every check of every pin, each on its own line; true when all passed. */
@@ -212,7 +221,7 @@ public final class PinHealth
 	/** HEAD, never GET: the jar must answer 200 and, when it says its size, the bootstrap's size. */
 	private boolean answersHead(String name, Bootstrap.Artifact artifact)
 	{
-		HttpRequest request = HttpRequest.newBuilder(URI.create(artifact.path())).timeout(timeout)
+		HttpRequest request = HttpRequest.newBuilder(URI.create(artifact.path())).timeout(headTimeout)
 			.method("HEAD", HttpRequest.BodyPublishers.noBody()).build();
 		try
 		{
