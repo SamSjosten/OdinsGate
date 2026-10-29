@@ -68,8 +68,20 @@ The core that later PRs build on; no window or releases yet:
   RuneLite's remote one can never mark our pin outdated (an empty object, which the spike proved in both modes).
   `Loader` is the child JVM's entry point: given the jars, key, port and main class it runs the preflight scan,
   refuses with every gap named (exit 2), or loads RuneLite through the patching loader and calls its main method on
-  a thread of its own, the context class loader set so Swing and plugins find RuneLite's classes. Not here yet: the
-  guard that refuses every host but ours (the next PR).
+  a thread of its own, the context class loader set so Swing and plugins find RuneLite's classes. It also takes
+  `--allow host:port` for each endpoint the game may reach (our server's game and HTTP ports, which `Launch`
+  passes) and installs `ConnectGuard` before the first RuneLite class loads.
+- `ConnectGuard`: the game reaches our server and nothing else. It is the child JVM's default `ProxySelector`,
+  which every `Socket`, `HttpURLConnection` and `java.net.http` connection in the JVM asks before it connects,
+  so a host is never even resolved unless it is allowed. The allowed endpoints and loopback (RuneLite's own
+  local sockets) get a direct connection; everything else is sent to a proxy that is a loopback socket of ours
+  which accepts and closes at once, so the attempt fails on the spot instead of reaching the network. An
+  allowed name is also allowed by its resolved addresses, re-resolved at most every ten seconds. Each endpoint
+  is logged once as `[guard] allowed host:port` or `[guard] refused scheme://host:port`, never a path. The tests
+  connect through an installed guard to a loopback socket, a refused socket, a refused URL and a refused
+  `java.net.http` request and check the count. Its limit: NIO `SocketChannel` and a native library's own sockets
+  never ask the selector. The client connects with `Socket` and RuneLite's HTTP goes through OkHttp, which both
+  do; the jars are not yet scanned for `SocketChannel` use (a `Preflight` check for it is a follow-up).
 - `Main` and `LauncherRun`: the launcher's entry point (the jar's `Main-Class`) and the headless run it makes for
   now, the sequence the window will drive step by step later: check the server (hints only; each outcome has its
   own exit code, 10-14), fetch the pinned RuneLite into `<data>/runelite/<commit>/` (exit 20 when it can't), plan
