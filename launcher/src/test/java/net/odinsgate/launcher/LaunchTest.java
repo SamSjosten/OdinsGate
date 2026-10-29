@@ -60,7 +60,9 @@ public class LaunchTest
 			int main = command.indexOf(Loader.class.getName());
 			assertTrue(main > 0, "the loader is the child JVM's main class: " + command);
 			List<String> loaderArgs = command.subList(main + 1, command.indexOf("--"));
-			assertEquals(Loader.arguments(PIN.gameJars(), SIGNED.modulus(), 43594, Loader.RUNELITE_MAIN), loaderArgs);
+			assertEquals(Loader.arguments(PIN.gameJars(), SIGNED, Loader.RUNELITE_MAIN), loaderArgs);
+			assertTrue(loaderArgs.containsAll(List.of("--allow", "odinsgate.net:43594", "odinsgate.net:43595")),
+				"the game may reach the signed server's two ports: " + loaderArgs);
 			assertEquals("http://odinsgate.net:43595/launcher/jav_config.ws",
 				command.get(command.indexOf("--jav_config") + 1));
 		}

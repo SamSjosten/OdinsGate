@@ -300,6 +300,9 @@ public class LauncherRunTest
 		assertEquals(0, run(options("--server", "staging.odinsgate.net:44594", "--dev"), steps));
 		assertEquals(new Manifest.Server("staging.odinsgate.net", 44594, 44595, ManifestTest.MODULUS), steps.checked);
 		assertEquals("44594", steps.command.get(steps.command.indexOf("--port") + 1));
+		assertTrue(steps.command.containsAll(List.of("staging.odinsgate.net:44594", "staging.odinsgate.net:44595")),
+			"the game may reach the staging server, not the signed one: " + steps.command);
+		assertFalse(steps.command.contains("odinsgate.net:43594"), steps.command.toString());
 		assertTrue(steps.command.contains("--developer-mode"), steps.command.toString());
 		assertTrue(logBytes.toString(StandardCharsets.UTF_8).contains("developer mode"));
 	}

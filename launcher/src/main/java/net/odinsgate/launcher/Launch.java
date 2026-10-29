@@ -10,7 +10,8 @@ import java.util.Objects;
  * One launch, planned from the mode ({@link LaunchOptions}), the system and the signed manifest: where this launch's
  * files go, the runtime config written first, the server it dials, and the game's command line. Whatever the mode,
  * the game gets its own home folder under our data folder (never the friend's real RuneLite profile), the local
- * runtime config, our API base, {@code --disable-telemetry}, and a loader told the exact jars, key and port.
+ * runtime config, our API base, {@code --disable-telemetry}, and a loader told the exact jars, key, port and the
+ * two endpoints the game may reach.
  *
  * @param dataDir the launcher's data folder, {@code --home} or the system's place
  * @param gameHome the folder the game sees as the user's home ({@code -Duser.home}), so RuneLite keeps its profile,
@@ -68,7 +69,7 @@ public record Launch(LaunchOptions options, Path dataDir, Path gameHome, Path rt
 			server.httpPort(),
 			installed.loaderClasspath(),
 			Loader.class.getName(),
-			Loader.arguments(pin.gameJars(), server.modulus(), server.gamePort(), Loader.RUNELITE_MAIN),
+			Loader.arguments(pin.gameJars(), server, Loader.RUNELITE_MAIN),
 			options.developerMode());
 		return new Launch(options, dataDir, gameHome, rtconf, server, spec);
 	}
