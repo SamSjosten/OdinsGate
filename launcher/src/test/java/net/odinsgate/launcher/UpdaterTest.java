@@ -499,6 +499,45 @@ public class UpdaterTest
 	}
 
 	@Test
+	public void aStopBeforeTheSignatureWasStagedLeavesTheOldPairStanding() throws Exception
+	{
+		release(PRIMARY, "0.2.0", Map.of("a.jar", JAR_A));
+		run(updater("0.1.0").update());
+		// The launcher stopped with the 0.3.0 manifest written under its .new name and its signature not yet
+		// staged: the signature in place is still 0.2.0's, which the staged manifest doesn't verify against.
+		byte[] next = manifest("0.3.0", "0.1.0", Map.of("b.jar", JAR_B), null).getBytes(StandardCharsets.UTF_8);
+		Files.write(data.resolve("manifest.json.new"), next);
+		served.clear();
+		Updater.Run run = run(updater("0.1.0").update());
+		assertEquals("0.2.0", run.manifest().version, "the old pair stands");
+		assertFalse(Files.exists(data.resolve("manifest.json.new")));
+		assertFalse(logText().contains("finished keeping"), logText());
+		// The same for a manifest cut short mid-write.
+		Files.write(data.resolve("manifest.json.new"), java.util.Arrays.copyOf(next, next.length / 2));
+		run = run(updater("0.1.0").update());
+		assertEquals("0.2.0", run.manifest().version);
+		assertFalse(Files.exists(data.resolve("manifest.json.new")));
+	}
+
+	@Test
+	public void versionsThatCompareEqualButAreNamedApartStayApart() throws Exception
+	{
+		release(PRIMARY, "0.2", Map.of("a.jar", JAR_A));
+		assertEquals("0.2", run(updater("0.1.0").update()).version());
+		// 0.2.0 compares equal to 0.2, so it isn't older than the accepted manifest and is taken; it is another
+		// folder, with other files, and the pointer names it.
+		release(PRIMARY, "0.2.0", Map.of("b.jar", JAR_B));
+		Updater.Run run = run(updater("0.1.0").update());
+		assertEquals("0.2.0", run.version());
+		assertEquals("0.2.0", Files.readString(data.resolve("current")).trim());
+		assertEquals(List.of(data.resolve("versions").resolve("0.2.0").resolve("lib").resolve("b.jar")), run.jars());
+		served.clear();
+		run = run(updater("0.1.0").update());
+		assertEquals("0.2.0", run.version());
+		assertEquals(List.of(data.resolve("versions").resolve("0.2.0").resolve("lib").resolve("b.jar")), run.jars());
+	}
+
+	@Test
 	public void aTornAcceptedPairIsStoodInForByTheNewestVersionsManifest() throws Exception
 	{
 		release(PRIMARY, "0.2.0", Map.of("a.jar", JAR_A));
