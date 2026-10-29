@@ -10,6 +10,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Duration;
@@ -97,6 +98,13 @@ public class WindowRunTest
 			}
 		}
 
+		/** Runs the next queued task only. */
+		void runOne()
+		{
+			assertFalse(tasks.isEmpty(), "a task is queued");
+			tasks.poll().run();
+		}
+
 		/** The one live timer of this kind. */
 		Timer live(boolean repeating)
 		{
@@ -143,6 +151,9 @@ public class WindowRunTest
 	private final FakeWorker worker = new FakeWorker();
 	private final TestClock clock = new TestClock();
 	private final List<Screen.View> views = new ArrayList<>();
+	private final List<String> clipboard = new ArrayList<>();
+	private static final Map<String, String> SYSTEM = Map.of("os.name", "TestOS", "os.version", "1.0",
+		"java.version", "21.0.1", "java.vendor", "Testers");
 	private Manifest manifest;
 	private Path home;
 
@@ -160,7 +171,29 @@ public class WindowRunTest
 		LauncherRun.Session session =
 			run.session(options, manifest, LINUX, Map.of(), dir.resolve("user-home"), INSTALLED, log);
 		return new WindowRun(new Screen(auto, session.firstRun()), session, notice, worker, Runnable::run, views::add,
-			clock);
+			clock, clipboard::add, SYSTEM);
+	}
+
+	/** The good manifest with a second pin, for a server that moves to a revision the launcher already knows. */
+	private static Manifest twoPins() throws Exception
+	{
+		String second = "{ \"revision\": 242, \"runelite\": \"1.13.5\", \"commit\": \"" + ManifestTest.COMMIT
+			+ "\", \"bootstrapSha256\": \"" + ManifestTest.SHA256 + "\" }, {";
+		return Manifest.parse(ManifestTest.good().replace("\"pins\": [ {", "\"pins\": [ " + second));
+	}
+
+	/** Up to the game running, with the wait on it still queued on the worker. */
+	private WindowRun runningGame(LauncherRunTest.FakeSteps steps)
+	{
+		WindowRun run = windowRun(steps);
+		run.start();
+		worker.drain();
+		assertEquals(Screen.Phase.READY, last().phase());
+		run.play();
+		worker.runOne();
+		assertEquals(Screen.Phase.RUNNING, last().phase());
+		assertEquals(1, worker.tasks.size(), "the wait on the game is queued, nothing else");
+		return run;
 	}
 
 	private WindowRun windowRun(LauncherRun.Steps steps)
@@ -362,6 +395,108 @@ public class WindowRunTest
 		assertEquals(List.of("STARTING", "CHECKING", "FAILED"), states(), "the log and status file stop too");
 		assertTrue(logBytes.toString(StandardCharsets.UTF_8).contains("FAILED: unexpected: the probe list is empty"),
 			logBytes.toString(StandardCharsets.UTF_8));
+	}
+
+	@Test
+	public void theServerIsWatchedWhileTheGameRunsAndAMovedRevisionRestartsIt() throws Exception
+	{
+		manifest = twoPins();
+		LauncherRunTest.FakeSteps steps = new LauncherRunTest.FakeSteps();
+		steps.status = new ServerCheck.Status(true, true, 241, 3);
+		WindowRun run = runningGame(steps);
+		FakeWorker.Timer watch = worker.live(true);
+		assertEquals(Screen.WATCH_PERIOD, watch.wait);
+		LauncherRunTest.FakeProcess first = steps.game;
+
+		watch.task.run();
+		assertEquals(1, steps.watched);
+		assertEquals("The game is running.", last().status(), "the same revision changes nothing");
+		steps.status = null;
+		watch.task.run();
+		assertEquals("The game is running.", last().status(), "a server that didn't answer changes nothing");
+		steps.status = new ServerCheck.Status(true, true, 242, 2);
+		watch.task.run();
+		assertEquals(Screen.UPDATED_LINE, last().status());
+		assertEquals(Screen.RESTART_LINE, last().detail());
+		assertTrue(last().canPlay());
+		String log = logBytes.toString(StandardCharsets.UTF_8);
+		assertTrue(log.contains("watch: the server is up at revision 242 with 2 player(s), not the 241 the game runs"),
+			log);
+		assertFalse(log.contains("revision 241 with 3 player(s)"), "a look that found nothing new isn't logged");
+
+		views.clear();
+		run.play();
+		assertTrue(first.destroyed, "the running game is closed");
+		assertEquals("Closing the game…", last().status());
+		assertFalse(watch.cancelled, "the watch runs until the game is gone");
+
+		steps.result = new ServerCheck.Result.Ready(242, 2);
+		worker.drain();
+		assertEquals(List.of(Screen.Phase.RUNNING, Screen.Phase.CHECKING, Screen.Phase.DOWNLOADING,
+			Screen.Phase.LAUNCHING, Screen.Phase.EXITED), phases(), "closing, then the launch over, without a click");
+		assertEquals(manifest.pin(242), steps.fetched, "the new revision's pin");
+		assertTrue(steps.game != first, "a new game process");
+		assertTrue(worker.noneLive(), "the watch is called off once the game is gone");
+	}
+
+	@Test
+	public void aMovedRevisionWithoutAPinStopsAfterTheRestart()
+	{
+		LauncherRunTest.FakeSteps steps = new LauncherRunTest.FakeSteps();
+		steps.status = new ServerCheck.Status(true, true, 242, 2);
+		WindowRun run = runningGame(steps);
+		worker.live(true).task.run();
+		assertEquals(Screen.UPDATED_LINE, last().status());
+		run.play();
+		steps.result = new ServerCheck.Result.Ready(242, 2);
+		worker.drain();
+		assertEquals(Screen.Phase.STOPPED, last().phase());
+		assertEquals("The server was updated.", last().status());
+		assertTrue(last().detail().contains("242"), last().detail());
+		assertTrue(worker.noneLive());
+	}
+
+	@Test
+	public void theProblemReportGoesToTheClipboardWithoutAPassword() throws Exception
+	{
+		Path gameLog = home.resolve("logs").resolve("game.log");
+		Files.createDirectories(gameLog.getParent());
+		Files.writeString(gameLog, "[loader] 31 jars\n-Dpassword=hunter2 was on the line\nthe game drew a frame\n");
+		Path clientLog = home.resolve("home").resolve(".runelite").resolve("logs").resolve("client.log");
+		Files.createDirectories(clientLog.getParent());
+		Files.writeString(clientLog, "logged in as test\nAuthorization: Bearer abc123\nworld 301\n");
+		LauncherRunTest.FakeSteps steps = new LauncherRunTest.FakeSteps();
+		WindowRun run = windowRun(steps);
+		run.start();
+		worker.drain();
+		run.play();
+		worker.runOne();
+		worker.live(true).task.run();
+
+		boolean[] done = new boolean[1];
+		run.copyReport(() -> done[0] = true);
+		assertTrue(clipboard.isEmpty(), "the report is built on the worker");
+		worker.drain();
+		assertTrue(done[0]);
+		assertEquals(1, clipboard.size());
+		String report = clipboard.get(0);
+		assertTrue(report.startsWith(Names.APP_NAME + " problem report, " + AT), report);
+		assertTrue(report.contains("launcher " + Main.VERSION), report);
+		assertTrue(report.contains("system linux/x64, TestOS 1.0, java 21.0.1 (Testers)"), report);
+		assertTrue(report.contains("revision 241, pin RuneLite 1.13.4 at " + ManifestTest.COMMIT), report);
+		assertTrue(report.contains(" CHECKING: "), report);
+		assertTrue(report.contains(" DOWNLOADING: "), report);
+		assertTrue(report.contains(" watch: the server didn't answer\n"), "the look at the server is in it too");
+		assertTrue(report.indexOf(" DOWNLOADING: ") < report.indexOf(" watch: "), "steps first, then the looks");
+		assertTrue(report.contains("the game drew a frame"), report);
+		assertTrue(report.contains("logged in as test"), report);
+		assertTrue(report.contains("world 301"), report);
+		assertFalse(report.contains("hunter2"), report);
+		assertFalse(report.contains("abc123"), report);
+		assertFalse(report.contains("Bearer"), report);
+		assertTrue(report.contains(ProblemReport.LEFT_OUT), report);
+		assertFalse(report.contains(home.toString()), "no folder of the friend's in the report");
+		assertTrue(report.contains("data in <data>"), report);
 	}
 
 	@Test

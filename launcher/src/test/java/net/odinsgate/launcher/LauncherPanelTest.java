@@ -29,7 +29,7 @@ public class LauncherPanelTest
 	@Test
 	public void eachPartOfTheViewIsDrawn()
 	{
-		LauncherPanel panel = new LauncherPanel(() -> {}, () -> {});
+		LauncherPanel panel = new LauncherPanel(() -> {}, () -> {}, () -> {});
 		panel.render(view(Screen.Phase.WAITING, "The server is offline or restarting.", "Trying again in 30 seconds.",
 			false, false, true, "", true));
 		assertEquals("The server is offline or restarting.", panel.statusLabel().getText());
@@ -64,7 +64,7 @@ public class LauncherPanelTest
 		assertEquals(new Dimension(400, 200), LauncherPanel.roomFor(new Dimension(400, 200), new Dimension(300, 100)),
 			"a window the friend enlarged keeps its size");
 
-		LauncherPanel panel = new LauncherPanel(() -> {}, () -> {});
+		LauncherPanel panel = new LauncherPanel(() -> {}, () -> {}, () -> {});
 		panel.render(view(Screen.Phase.CHECKING, "Checking the server…", "", true, false, false, "", false));
 		int plain = panel.getPreferredSize().width;
 		panel.render(view(Screen.Phase.CHECKING, "Checking the server…", "", true, false, false, "", true));
@@ -77,7 +77,7 @@ public class LauncherPanelTest
 	{
 		AtomicInteger plays = new AtomicInteger();
 		AtomicInteger retries = new AtomicInteger();
-		LauncherPanel panel = new LauncherPanel(plays::incrementAndGet, retries::incrementAndGet);
+		LauncherPanel panel = new LauncherPanel(plays::incrementAndGet, retries::incrementAndGet, () -> {});
 		panel.playButton().doClick();
 		panel.retryButton().doClick();
 		assertEquals(0, plays.get() + retries.get(), "nothing before the first view");
@@ -97,9 +97,25 @@ public class LauncherPanelTest
 	}
 
 	@Test
+	public void theReportButtonIsAlwaysThereAndSaysCopiedForAMoment()
+	{
+		AtomicInteger reports = new AtomicInteger();
+		LauncherPanel panel = new LauncherPanel(() -> {}, () -> {}, reports::incrementAndGet);
+		assertTrue(panel.reportButton().isEnabled(), "a report helps before the first view too");
+		panel.reportButton().doClick();
+		assertEquals(1, reports.get());
+		panel.render(view(Screen.Phase.STOPPED, "The game could not be started.", "no java", false, false, true, "",
+			false));
+		assertTrue(panel.reportButton().isEnabled());
+		assertEquals(LauncherPanel.REPORT_LABEL, panel.reportButton().getText());
+		panel.reportCopied();
+		assertEquals(LauncherPanel.COPIED_LABEL, panel.reportButton().getText());
+	}
+
+	@Test
 	public void noTextIsEverRenderedAsHtml()
 	{
-		LauncherPanel panel = new LauncherPanel(() -> {}, () -> {});
+		LauncherPanel panel = new LauncherPanel(() -> {}, () -> {}, () -> {});
 		String markup = "<html><b>Down</b> tonight</html>";
 		panel.render(view(Screen.Phase.STOPPED, markup, markup, false, false, true, markup, false));
 		for (JLabel label : new JLabel[]{panel.statusLabel(), panel.detailLabel(), panel.firstRunLabel()})

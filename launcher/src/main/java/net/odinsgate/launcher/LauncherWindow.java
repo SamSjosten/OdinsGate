@@ -1,9 +1,14 @@
 package net.odinsgate.launcher;
 
+import java.awt.Toolkit;
+import java.awt.datatransfer.StringSelection;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.io.PrintStream;
 import java.time.Clock;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -14,7 +19,7 @@ import javax.swing.SwingUtilities;
  * The launcher window itself: a frame titled with the app's name around a {@link LauncherPanel}, driven by a
  * {@link WindowRun} on Swing's event thread with a small daemon thread pool for the steps that block.
  * {@link #open} returns when the friend closes the window; the game, once started, is its own process and keeps
- * running (the launcher staying open through the game's run is the next PR).
+ * running. While the window is open and the game runs, the server is looked at once a minute for a new revision.
  */
 public final class LauncherWindow
 {
@@ -34,7 +39,7 @@ public final class LauncherWindow
 	public static int open(LauncherRun.Session session, LauncherRun.Steps steps, boolean firstRun, Clock clock,
 		PrintStream log)
 	{
-		ScheduledExecutorService pool = Executors.newScheduledThreadPool(2, task ->
+		ScheduledExecutorService pool = Executors.newScheduledThreadPool(3, task ->
 		{
 			Thread thread = new Thread(task, "launcher-worker");
 			thread.setDaemon(true);
@@ -81,6 +86,27 @@ public final class LauncherWindow
 		pool.shutdown();
 	}
 
+	/** The system's clipboard; on the event thread. */
+	static void toClipboard(String text)
+	{
+		Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new StringSelection(text), null);
+	}
+
+	/** What a problem report says about the machine. */
+	static Map<String, String> system()
+	{
+		Map<String, String> system = new HashMap<>();
+		for (String key : List.of("os.name", "os.version", "java.version", "java.vendor"))
+		{
+			String value = System.getProperty(key);
+			if (value != null)
+			{
+				system.put(key, value);
+			}
+		}
+		return system;
+	}
+
 	private static void show(LauncherRun.Session session, LauncherRun.Steps steps, boolean firstRun, Clock clock,
 		ScheduledExecutorService pool, CountDownLatch closed)
 	{
@@ -95,10 +121,12 @@ public final class LauncherWindow
 			}
 		});
 		WindowRun[] run = new WindowRun[1];
-		LauncherPanel panel = new LauncherPanel(() -> run[0].play(), () -> run[0].retry());
+		LauncherPanel[] panel = new LauncherPanel[1];
+		panel[0] = new LauncherPanel(() -> run[0].play(), () -> run[0].retry(),
+			() -> run[0].copyReport(panel[0]::reportCopied));
 		run[0] = new WindowRun(new Screen(false, firstRun), session, steps::notice, WindowRun.Worker.threads(pool),
-			SwingUtilities::invokeLater, panel::render, clock);
-		frame.setContentPane(panel);
+			SwingUtilities::invokeLater, panel[0]::render, clock, LauncherWindow::toClipboard, system());
+		frame.setContentPane(panel[0]);
 		// The first view (the check under way, the first-run line when it applies) is drawn before the frame is
 		// sized, so the frame opens with room for it; what appears later (the notice, a detail) grows the frame.
 		run[0].start();

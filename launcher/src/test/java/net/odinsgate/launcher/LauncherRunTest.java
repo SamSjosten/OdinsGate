@@ -18,6 +18,7 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -44,6 +45,9 @@ public class LauncherRunTest
 		Exception fetchFailure;
 		IOException startFailure;
 		int gameExit;
+		/** What the status page says to the watch while the game runs; null is a server that doesn't answer. */
+		ServerCheck.Status status;
+		int watched;
 
 		Manifest.Server checked;
 		Manifest checkedManifest;
@@ -73,6 +77,13 @@ public class LauncherRunTest
 				throw e;
 			}
 			return this.pin;
+		}
+
+		@Override
+		public Optional<ServerCheck.Status> status(Manifest.Server server)
+		{
+			watched++;
+			return Optional.ofNullable(status);
 		}
 
 		@Override
@@ -305,6 +316,23 @@ public class LauncherRunTest
 		assertFalse(steps.command.contains("odinsgate.net:43594"), steps.command.toString());
 		assertTrue(steps.command.contains("--developer-mode"), steps.command.toString());
 		assertTrue(logBytes.toString(StandardCharsets.UTF_8).contains("developer mode"));
+	}
+
+	@Test
+	public void aLargeGameLogIsMovedAsideBeforeTheGameStarts() throws Exception
+	{
+		Path gameLog = home.resolve("logs").resolve("game.log");
+		Files.createDirectories(gameLog.getParent());
+		Files.writeString(gameLog, "old run\n".repeat((int) (RotatingLog.MAX_BYTES / 8) + 1));
+		FakeSteps steps = new FakeSteps();
+		assertEquals(0, run(options(), steps));
+		assertEquals(gameLog, steps.gameLog, "the game still logs to the same file");
+		assertFalse(Files.exists(gameLog), "the old log was moved aside, the game starts a fresh one");
+		assertTrue(Files.readString(RotatingLog.aside(gameLog, 1)).startsWith("old run"));
+
+		Files.writeString(gameLog, "small\n");
+		assertEquals(0, run(options(), new FakeSteps()));
+		assertEquals("small\n", Files.readString(gameLog), "a small log stays");
 	}
 
 	@Test

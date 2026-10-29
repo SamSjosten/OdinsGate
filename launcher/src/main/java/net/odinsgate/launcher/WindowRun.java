@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.time.Clock;
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
@@ -17,9 +18,10 @@ import java.util.function.Supplier;
  * only, the window's ({@link UiThread}); every step that blocks (the server check, the download, the game's
  * start and its whole run) goes to the {@link Worker}, whose answer is handed back to the window's thread. The
  * timers of a failed check (the retry in thirty seconds, the once-a-second redraw of the countdown) run on the
- * worker too, and are cancelled the moment a check starts, by the timer or by the Retry button. The window
- * ({@link LauncherWindow}) gives this Swing's event thread and a small thread pool; the tests give a thread of
- * their own and a hand-cranked worker.
+ * worker too, and are cancelled the moment a check starts, by the timer or by the Retry button; so does the
+ * once-a-minute look at the server while the game runs, cancelled when the game is gone. A restart closes the
+ * game and lets its exit start the launch over. The window ({@link LauncherWindow}) gives this Swing's event
+ * thread and a small thread pool; the tests give a thread of their own and a hand-cranked worker.
  */
 public final class WindowRun
 {
@@ -41,7 +43,10 @@ public final class WindowRun
 		/** Runs {@code task} every {@code period} until cancelled. */
 		Cancellable every(Duration period, Runnable task);
 
-		/** The worker over {@code pool}: two threads are enough, the game's run holds one and the rest share one. */
+		/**
+		 * The worker over {@code pool}: the game's run holds one thread; the checks, the watch and the report share
+		 * the rest.
+		 */
 		static Worker threads(ScheduledExecutorService pool)
 		{
 			return new Worker()
@@ -86,10 +91,15 @@ public final class WindowRun
 	private final UiThread ui;
 	private final Consumer<Screen.View> render;
 	private final Clock clock;
+	private final Consumer<String> clipboard;
+	private final Map<String, String> system;
 	/** What the last fetch gave, for the launch; written by the worker, read by it after the window's thread. */
 	private volatile Launch.Pin fetched;
+	/** The running game, for a restart; written by the worker, read on the window's thread. */
+	private volatile Process game;
 	private Cancellable retry;
 	private Cancellable ticks;
+	private Cancellable watch;
 
 	/**
 	 * @param screen the state machine, fresh
@@ -99,9 +109,12 @@ public final class WindowRun
 	 * @param ui the window's thread
 	 * @param render draws a view; called on the window's thread after every change
 	 * @param clock the time the countdown and the outage's length are measured by
+	 * @param clipboard where a problem report goes; called on the window's thread
+	 * @param system {@code os.name}, {@code os.version}, {@code java.version}, {@code java.vendor} for the report
 	 */
 	public WindowRun(Screen screen, LauncherRun.Session session, Supplier<Optional<String>> notice, Worker worker,
-		UiThread ui, Consumer<Screen.View> render, Clock clock)
+		UiThread ui, Consumer<Screen.View> render, Clock clock, Consumer<String> clipboard,
+		Map<String, String> system)
 	{
 		this.screen = screen;
 		this.session = session;
@@ -110,6 +123,8 @@ public final class WindowRun
 		this.ui = ui;
 		this.render = render;
 		this.clock = clock;
+		this.clipboard = clipboard;
+		this.system = system;
 	}
 
 	/** On the window's thread: draws the first view, asks for the notice, and starts the server check. */
@@ -133,15 +148,44 @@ public final class WindowRun
 		on(new Screen.Event.Retry());
 	}
 
+	/**
+	 * The "Copy problem report" button, on the window's thread: the report is put together on the worker (it reads
+	 * the logs) and handed to the clipboard back here, then {@code done} runs.
+	 */
+	public void copyReport(Runnable done)
+	{
+		worker.run(() ->
+		{
+			String report = ProblemReport.build(session.platform(), system, version(), session.revision(),
+				session.pin(), session.recent(), session.dataDir(), session.gameLog(), session.clientLog(),
+				clock.instant());
+			ui.later(() ->
+			{
+				clipboard.accept(report);
+				done.run();
+			});
+		});
+	}
+
+	private String version()
+	{
+		return Main.VERSION;
+	}
+
 	/** Hands {@code event} to the screen, draws what it made of it and runs what it asked for. */
 	void on(Screen.Event event)
 	{
 		List<Screen.Command> commands = screen.on(event);
 		render.accept(screen.view());
 		execute(commands);
-		if (screen.view().phase() != Screen.Phase.WAITING)
+		Screen.Phase phase = screen.view().phase();
+		if (phase != Screen.Phase.WAITING)
 		{
 			cancelTimers();
+		}
+		if (phase != Screen.Phase.RUNNING)
+		{
+			cancelWatch();
 		}
 	}
 
@@ -164,8 +208,28 @@ public final class WindowRun
 					retry = worker.after(retryAfter.delay(), () -> ui.later(this::retry));
 					ticks = worker.every(TICK, () -> ui.later(() -> on(new Screen.Event.Tick(clock.instant()))));
 				}
+				case Screen.Command.WatchEvery watchEvery ->
+				{
+					cancelWatch();
+					watch = worker.every(watchEvery.period(), guarded(this::watch));
+				}
+				case Screen.Command.Restart restart ->
+				{
+					Process running = game;
+					if (running != null)
+					{
+						// Only a signal; the thread waiting on the game answers with Exited once it is gone.
+						running.destroy();
+					}
+				}
 			}
 		}
+	}
+
+	private void watch()
+	{
+		Integer revision = session.watch().map(ServerCheck.Status::revision).orElse(null);
+		ui.later(() -> on(new Screen.Event.Watched(revision)));
 	}
 
 	/** The notice is never a reason to stop: whatever goes wrong fetching it, the screen hears nothing. */
@@ -205,19 +269,24 @@ public final class WindowRun
 
 	private void launch()
 	{
-		Process game;
+		Process started;
 		try
 		{
-			game = session.start(fetched);
+			started = session.start(fetched);
 		}
 		catch (IOException e)
 		{
 			ui.later(() -> on(new Screen.Event.LaunchFailed(message(e))));
 			return;
 		}
-		ui.later(() -> on(new Screen.Event.Launched(game.pid())));
-		int code = session.waitFor(game);
-		ui.later(() -> on(new Screen.Event.Exited(code)));
+		game = started;
+		ui.later(() -> on(new Screen.Event.Launched(started.pid())));
+		// The wait is its own task, so the game's whole run holds one worker thread and nothing else.
+		worker.run(guarded(() ->
+		{
+			int code = session.waitFor(started);
+			ui.later(() -> on(new Screen.Event.Exited(code)));
+		}));
 	}
 
 	/**
@@ -239,6 +308,15 @@ public final class WindowRun
 				ui.later(() -> on(new Screen.Event.Failed(why)));
 			}
 		};
+	}
+
+	private void cancelWatch()
+	{
+		if (watch != null)
+		{
+			watch.cancel();
+			watch = null;
+		}
 	}
 
 	private void cancelTimers()

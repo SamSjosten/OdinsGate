@@ -70,19 +70,49 @@ public final class Main
 		Path userHome = Path.of(System.getProperty("user.home"));
 		Path dataDir = options.dataDir(platform, env, userHome);
 		Clock clock = Clock.systemUTC();
-		LauncherRun.Steps steps = LauncherRun.real(dataDir);
-		LauncherRun run = new LauncherRun(VERSION, steps, clock);
-		LauncherRun.Session session = run.session(options, manifest, platform, env, userHome, thisJvm(), out);
-		if (options.auto())
+		try (PrintStream log = openLog(dataDir, out))
 		{
-			return run.run(session);
+			LauncherRun.Steps steps = LauncherRun.real(dataDir);
+			LauncherRun run = new LauncherRun(VERSION, steps, clock);
+			LauncherRun.Session session = run.session(options, manifest, platform, env, userHome, thisJvm(), log);
+			if (options.auto())
+			{
+				return run.run(session);
+			}
+			if (GraphicsEnvironment.isHeadless())
+			{
+				log.println("[launcher] no display here: running without the window");
+				return run.run(session);
+			}
+			return LauncherWindow.open(session, steps, session.firstRun(), clock, log);
 		}
-		if (GraphicsEnvironment.isHeadless())
+	}
+
+	/**
+	 * The launcher's own log under the data folder, rotated when large, with every line still going to {@code out}
+	 * (the console, or what a wrapper script collects). A log that can't be opened is said so on {@code out}, which
+	 * then is the log: a launcher never stops for its log.
+	 */
+	static PrintStream openLog(Path dataDir, PrintStream out)
+	{
+		Path file = dataDir.resolve(LauncherRun.LOGS_DIR).resolve(LauncherRun.LAUNCHER_LOG);
+		try
 		{
-			out.println("[launcher] no display here: running without the window");
-			return run.run(session);
+			return RotatingLog.open(file, out);
 		}
-		return LauncherWindow.open(session, steps, session.firstRun(), clock, out);
+		catch (IOException e)
+		{
+			out.println("[launcher] the log " + file + " could not be opened: " + e.getMessage());
+			return new PrintStream(out, true, StandardCharsets.UTF_8)
+			{
+				@Override
+				public void close()
+				{
+					// The caller's stream stays open.
+					flush();
+				}
+			};
+		}
 	}
 
 	/** This JVM's runtime and class path: what the game's child JVM is started from. */
