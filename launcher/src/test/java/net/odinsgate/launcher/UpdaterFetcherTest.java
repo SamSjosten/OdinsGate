@@ -63,16 +63,18 @@ public class UpdaterFetcherTest
 			byte[] chunk = "x".repeat(1024).getBytes(StandardCharsets.UTF_8);
 			try (OutputStream out = exchange.getResponseBody())
 			{
-				// Until the fetcher cuts the connection (the write then fails) or the test is over.
-				for (long sent = 0; over.getCount() > 0 && sent < 64L * 1024 * 1024; sent += chunk.length)
+				// Well past the limit, then held open until the test is over: a fetcher that only measured the
+				// body at its end would wait for an end that never comes.
+				for (int i = 0; i < 4; i++)
 				{
 					out.write(chunk);
 					out.flush();
 				}
+				over.await();
 			}
-			catch (IOException e)
+			catch (InterruptedException | IOException e)
 			{
-				// The fetcher gave up on us: the end this answer waits for.
+				// The test is over, or the fetcher cut the connection: either ends this answer.
 			}
 			exchange.close();
 		});
@@ -157,7 +159,8 @@ public class UpdaterFetcherTest
 	@Test
 	public void aBodyThatNeverEndsIsCutOffAtTheLimitAsItComes() throws Exception
 	{
-		// Nothing but the limit can end this fetch within its ample deadline: the body is counted as it arrives.
+		// The answer is held open past the limit until the test is over, so nothing but a count as the bytes come
+		// can end this fetch before its ample deadline.
 		IOException refused = assertThrows(IOException.class, () -> fetcher.fetch(at("/endless")));
 		assertTrue(refused.getMessage().contains("more than " + MAX_BYTES + " bytes"), refused.getMessage());
 	}
