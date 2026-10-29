@@ -341,6 +341,31 @@ public class LauncherRunTest
 	}
 
 	@Test
+	public void aGameLogThatCannotBeMovedAsideIsLoggedAndTheGameAppendsToIt() throws Exception
+	{
+		Path gameLog = home.resolve("logs").resolve("game.log");
+		Files.createDirectories(gameLog.getParent());
+		String old = "old run\n".repeat((int) (RotatingLog.MAX_BYTES / 8) + 1);
+		Files.writeString(gameLog, old);
+		Files.writeString(RotatingLog.aside(gameLog, 1), "one\n");
+		Files.writeString(RotatingLog.aside(gameLog, RotatingLog.KEEP), "oldest\n");
+		// A folder with something in it where the oldest log is set aside: no system lets a file replace that, so
+		// the rotation fails after the live log has moved, and must move it back.
+		Path blocked = gameLog.resolveSibling(gameLog.getFileName() + ".dropping");
+		Files.createDirectories(blocked);
+		Files.writeString(blocked.resolve("stray"), "x");
+		FakeSteps steps = new FakeSteps();
+		assertEquals(0, run(options(), steps), "the game still runs");
+		assertEquals(gameLog, steps.gameLog, "and still logs to the same file");
+		assertEquals(old, Files.readString(gameLog), "the live log is back where it was, for the game to append to");
+		assertEquals("one\n", Files.readString(RotatingLog.aside(gameLog, 1)), "the older logs are untouched");
+		assertEquals("oldest\n", Files.readString(RotatingLog.aside(gameLog, RotatingLog.KEEP)));
+		assertFalse(Files.exists(gameLog.resolveSibling(gameLog.getFileName() + ".moving")));
+		assertTrue(logBytes.toString(StandardCharsets.UTF_8).contains("could not be moved aside"),
+			logBytes.toString(StandardCharsets.UTF_8));
+	}
+
+	@Test
 	public void withoutAStatusFileOnlyTheLogSeesTheStates() throws Exception
 	{
 		FakeSteps steps = new FakeSteps();
