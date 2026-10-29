@@ -70,6 +70,14 @@ The core that later PRs build on; no window or releases yet:
   refuses with every gap named (exit 2), or loads RuneLite through the patching loader and calls its main method on
   a thread of its own, the context class loader set so Swing and plugins find RuneLite's classes. Not here yet: the
   guard that refuses every host but ours, and the VM scripts (the next PRs).
+- `Main` and `LauncherRun`: the launcher's entry point (the jar's `Main-Class`) and the headless run it makes for
+  now, the sequence the window will drive step by step later: check the server (hints only; each outcome has its
+  own exit code, 10-14), fetch the pinned RuneLite into `<data>/runelite/<commit>/` (exit 20 when it can't), plan
+  the launch, start the game's child JVM with its output in `<data>/logs/game.log` (exit 21 when it can't), wait,
+  and exit with the game's own code. Every state goes to the log and, with `--status-file`, the status file. Until
+  the release PR ships the signed manifest, `--manifest <file>` names a local one, trusted as it is. On the test VM:
+  `java -cp <launcher jar and its libs> net.odinsgate.launcher.Main --auto --dev --home C:\RSPS\launcher
+  --status-file C:\RSPS\launcher\status.json --manifest C:\RSPS\launcher\manifest.json`.
 
 The spike that proved the patching route on the real jars was PR #113, closed unmerged as planned: nothing of
 RuneLite's or Jagex's enters this repo, in git or in a release.
