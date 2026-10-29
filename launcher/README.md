@@ -76,7 +76,10 @@ The core that later PRs build on; no window or releases yet:
   so a host is never even resolved unless it is allowed. The allowed endpoints and loopback (RuneLite's own
   local sockets) get a direct connection; everything else is sent to a proxy that is a loopback socket of ours
   which accepts and closes at once, so the attempt fails on the spot instead of reaching the network. An
-  allowed name is also allowed by its resolved addresses, re-resolved at most every ten seconds. Each endpoint
+  allowed name is also allowed by its resolved addresses, but only while it still resolves to them: the names
+  are looked up again, at most every ten seconds, when an address asks, so a name that moves takes its old
+  address with it (a name that stops resolving keeps its last addresses, so a DNS hiccup doesn't cut a running
+  game off). Each endpoint
   is logged once as `[guard] allowed host:port` or `[guard] refused scheme://host:port`, never a path. The tests
   connect through an installed guard to a loopback socket, a refused socket, a refused URL and a refused
   `java.net.http` request and check the count. Its limit: NIO `SocketChannel` and a native library's own sockets

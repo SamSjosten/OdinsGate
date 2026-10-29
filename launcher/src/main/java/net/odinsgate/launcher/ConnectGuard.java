@@ -19,6 +19,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.LongSupplier;
 import java.util.regex.Pattern;
 
 /**
@@ -32,17 +33,26 @@ import java.util.regex.Pattern;
  * Each endpoint is logged once, allowed or refused, never a path or a query.
  *
  * <p>An allowed host named by name is also allowed by the addresses it resolves to, since the client may connect
- * to the address it looked up itself; the names are resolved when the guard is made and again, at most once every
- * few seconds, when an unknown address asks. RuneLite's own block list ({@code runelite.jagex.domainblock}) can't be
+ * to the address it looked up itself, but only while the name still resolves to them: the names are looked up when
+ * the guard is made and again, at most once every few seconds, when an address asks, so a name that moves takes
+ * its old address with it. RuneLite's own block list ({@code runelite.jagex.domainblock}) can't be
  * set from outside and applies only outside Jagex's live environment, so this is the block. NIO channels don't
  * ask the selector; RuneLite and the client use none for the network.
  */
 public final class ConnectGuard extends ProxySelector implements Closeable
 {
+	/** A dotted IPv4 literal. */
+	private static final Pattern IPV4 = Pattern.compile("\\d+\\.\\d+\\.\\d+\\.\\d+");
 	/** A dotted IPv4 literal, or an IPv6 one, which is never resolved. */
 	private static final Pattern LITERAL = Pattern.compile("\\d+\\.\\d+\\.\\d+\\.\\d+|.*:.*");
-	/** How long a resolved address list stands before an unknown address makes the guard look the name up again. */
-	private static final long RESOLVE_AGAIN_AFTER_NANOS = 10_000_000_000L;
+	/** How long a look-up of the allowed names stands before an address that asks makes the guard look again. */
+	static final long RESOLVE_AGAIN_AFTER_NANOS = 10_000_000_000L;
+
+	/** How a name becomes addresses: {@link InetAddress#getAllByName} outside the tests. */
+	interface Resolver
+	{
+		InetAddress[] resolve(String host) throws UnknownHostException;
+	}
 
 	private final Set<String> endpoints;
 	private final PrintStream log;
@@ -51,6 +61,8 @@ public final class ConnectGuard extends ProxySelector implements Closeable
 	private final Set<String> seen = ConcurrentHashMap.newKeySet();
 	private final AtomicInteger refusedConnections = new AtomicInteger();
 	private final Map<String, Set<String>> resolved = new ConcurrentHashMap<>();
+	private final Resolver resolver;
+	private final LongSupplier clock;
 	private volatile long resolvedAt;
 
 	/**
@@ -59,6 +71,14 @@ public final class ConnectGuard extends ProxySelector implements Closeable
 	 */
 	public ConnectGuard(List<String> endpoints, PrintStream log) throws IOException
 	{
+		this(endpoints, log, InetAddress::getAllByName, System::nanoTime);
+	}
+
+	/** For the tests: names resolved and time told as the test says. */
+	ConnectGuard(List<String> endpoints, PrintStream log, Resolver resolver, LongSupplier clock) throws IOException
+	{
+		this.resolver = resolver;
+		this.clock = clock;
 		if (endpoints.isEmpty())
 		{
 			throw new IllegalArgumentException("a guard with nothing allowed would stop the game itself");
@@ -151,8 +171,8 @@ public final class ConnectGuard extends ProxySelector implements Closeable
 
 	static boolean isLoopback(String host)
 	{
-		return host.equals("localhost") || host.startsWith("127.") || host.equals("::1")
-			|| host.equals("0:0:0:0:0:0:0:1");
+		return host.equals("localhost") || host.equals("::1") || host.equals("0:0:0:0:0:0:0:1")
+			|| (host.startsWith("127.") && IPV4.matcher(host).matches());
 	}
 
 	private boolean allowed(String host, int port)
@@ -162,16 +182,18 @@ public final class ConnectGuard extends ProxySelector implements Closeable
 		{
 			return true;
 		}
-		if (resolvedContains(endpoint))
+		if (!LITERAL.matcher(host).matches())
 		{
-			return true;
-		}
-		// An address that may be a newly resolved allowed name: look the names up again, but not for every attempt.
-		if (!LITERAL.matcher(host).matches() || System.nanoTime() - resolvedAt < RESOLVE_AGAIN_AFTER_NANOS)
-		{
+			// A name not on the list is never allowed; only an address can stand for a listed name.
 			return false;
 		}
-		resolveAll();
+		// An address stands for an allowed name only while the name resolves to it. Once the last look-up is old,
+		// look the names up again before answering, whether the address is known (the name may have left it) or
+		// not (the name may have moved to it), but never for every attempt.
+		if (clock.getAsLong() - resolvedAt >= RESOLVE_AGAIN_AFTER_NANOS)
+		{
+			resolveAll();
+		}
 		return resolvedContains(endpoint);
 	}
 
@@ -187,10 +209,13 @@ public final class ConnectGuard extends ProxySelector implements Closeable
 		return false;
 	}
 
-	/** Each allowed name's addresses, with its port; a name that doesn't resolve now stands by its name alone. */
+	/**
+	 * Each allowed name's addresses, with its port. A name that doesn't resolve right now keeps the addresses it
+	 * last had, so a DNS hiccup doesn't cut a running game off; it is always allowed by name.
+	 */
 	private void resolveAll()
 	{
-		resolvedAt = System.nanoTime();
+		resolvedAt = clock.getAsLong();
 		for (String endpoint : endpoints)
 		{
 			int colon = endpoint.lastIndexOf(':');
@@ -203,7 +228,7 @@ public final class ConnectGuard extends ProxySelector implements Closeable
 			try
 			{
 				Set<String> addresses = ConcurrentHashMap.newKeySet();
-				for (InetAddress address : InetAddress.getAllByName(host))
+				for (InetAddress address : resolver.resolve(host))
 				{
 					addresses.add(host(address.getHostAddress()) + ":" + port);
 				}
@@ -211,7 +236,7 @@ public final class ConnectGuard extends ProxySelector implements Closeable
 			}
 			catch (UnknownHostException e)
 			{
-				// Offline, or a name that isn't one yet: the name itself stays allowed.
+				// Offline, or a name that isn't one yet: the last addresses and the name itself stay allowed.
 			}
 		}
 	}

@@ -16,6 +16,7 @@ import java.net.ProxySelector;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.URI;
+import java.net.UnknownHostException;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
@@ -23,6 +24,9 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeEach;
@@ -179,6 +183,50 @@ public class ConnectGuardTest
 	}
 
 	@Test
+	public void anAddressStandsForAnAllowedNameOnlyWhileTheNameResolvesToIt() throws Exception
+	{
+		AtomicReference<String> address = new AtomicReference<>("192.0.2.10");
+		AtomicLong now = new AtomicLong();
+		AtomicInteger lookups = new AtomicInteger();
+		ConnectGuard.Resolver resolver = host ->
+		{
+			lookups.incrementAndGet();
+			if (!host.equals("odinsgate.net") || address.get() == null)
+			{
+				throw new UnknownHostException(host);
+			}
+			return new InetAddress[]{InetAddress.getByName(address.get())}; // a literal: no look-up
+		};
+		guard = new ConnectGuard(List.of("odinsgate.net:43594"), log, resolver, now::get);
+		assertEquals(1, lookups.get(), "looked up once when made");
+		assertEquals(List.of(Proxy.NO_PROXY), guard.select(URI.create("socket://192.0.2.10:43594")));
+		assertEquals(1, lookups.get(), "a fresh look-up stands");
+
+		// The name moves: its old address stands until the look-up is old, then is refused and the new one allowed.
+		address.set("192.0.2.11");
+		assertEquals(List.of(Proxy.NO_PROXY), guard.select(URI.create("socket://192.0.2.10:43594")));
+		assertEquals(1, lookups.get(), "not looked up again within the window");
+		now.addAndGet(ConnectGuard.RESOLVE_AGAIN_AFTER_NANOS);
+		assertEquals(Proxy.Type.SOCKS, refused(guard.select(URI.create("socket://192.0.2.10:43594"))).type(),
+			"the address the name left is no longer allowed");
+		assertEquals(2, lookups.get(), "looked up again once the last look-up was old");
+		assertEquals(List.of(Proxy.NO_PROXY), guard.select(URI.create("socket://192.0.2.11:43594")));
+		assertEquals(2, lookups.get(), "a known address within the window asks for no look-up");
+
+		// A name that stops resolving keeps the addresses it last had.
+		address.set(null);
+		now.addAndGet(ConnectGuard.RESOLVE_AGAIN_AFTER_NANOS);
+		assertEquals(List.of(Proxy.NO_PROXY), guard.select(URI.create("socket://192.0.2.11:43594")));
+		assertEquals(3, lookups.get());
+		assertEquals(List.of(Proxy.NO_PROXY), guard.select(URI.create("socket://odinsgate.net:43594")), "by name");
+
+		// A name not on the list is never allowed and never looked up.
+		now.addAndGet(ConnectGuard.RESOLVE_AGAIN_AFTER_NANOS);
+		assertEquals(Proxy.Type.SOCKS, refused(guard.select(URI.create("socket://other.example:43594"))).type());
+		assertEquals(3, lookups.get());
+	}
+
+	@Test
 	public void endpointsAreValidatedAndNoneAtAllIsRefused()
 	{
 		for (String bad : List.of("odinsgate.net", "odinsgate.net:", ":43594", "odinsgate.net:0", "odinsgate.net:70000",
@@ -191,6 +239,7 @@ public class ConnectGuardTest
 		assertThrows(IllegalArgumentException.class, () -> new ConnectGuard(List.of(), log));
 		assertTrue(ConnectGuard.isLoopback("127.0.0.1") && ConnectGuard.isLoopback("127.1.2.3")
 			&& ConnectGuard.isLoopback("localhost") && ConnectGuard.isLoopback("::1"));
-		assertFalse(ConnectGuard.isLoopback("odinsgate.net") || ConnectGuard.isLoopback("192.168.0.210"));
+		assertFalse(ConnectGuard.isLoopback("odinsgate.net") || ConnectGuard.isLoopback("192.168.0.210")
+			|| ConnectGuard.isLoopback("127.example.com"), "a name is never loopback, whatever it starts with");
 	}
 }
