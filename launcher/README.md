@@ -69,15 +69,20 @@ The core that later PRs build on; no window or releases yet:
   `Loader` is the child JVM's entry point: given the jars, key, port and main class it runs the preflight scan,
   refuses with every gap named (exit 2), or loads RuneLite through the patching loader and calls its main method on
   a thread of its own, the context class loader set so Swing and plugins find RuneLite's classes. Not here yet: the
-  guard that refuses every host but ours, and the VM scripts (the next PRs).
+  guard that refuses every host but ours (the next PR).
 - `Main` and `LauncherRun`: the launcher's entry point (the jar's `Main-Class`) and the headless run it makes for
   now, the sequence the window will drive step by step later: check the server (hints only; each outcome has its
   own exit code, 10-14), fetch the pinned RuneLite into `<data>/runelite/<commit>/` (exit 20 when it can't), plan
   the launch, start the game's child JVM with its output in `<data>/logs/game.log` (exit 21 when it can't), wait,
   and exit with the game's own code. Every state goes to the log and, with `--status-file`, the status file. Until
-  the release PR ships the signed manifest, `--manifest <file>` names a local one, trusted as it is. On the test VM:
-  `java -cp <launcher jar and its libs> net.odinsgate.launcher.Main --auto --dev --home C:\RSPS\launcher
-  --status-file C:\RSPS\launcher\status.json --manifest C:\RSPS\launcher\manifest.json`.
+  the release PR ships the signed manifest, `--manifest <file>` names a local one, trusted as it is.
+- The installed layout and the test VM: `installDist` (part of `build`) lays the launcher out the way it is run,
+  `build/install/odinsgate-launcher/bin/odinsgate-launcher(.bat)` over `lib/*.jar`, and CI uploads that folder as
+  the `odinsgate-launcher` artifact. The test VM runs it from `C:\RSPS\launcher\app` through the `OdinsGate`
+  scheduled task (`test-runner/launch/OdinsGate.cmd`: `--auto --dev`, data under `C:\RSPS\launcher`, the status
+  file and a manifest `write-dev-manifest.ps1` makes from the live server), and `start-client.ps1 -Launcher
+  [-LauncherVersion 0.1.0]` brings up a logged-in client through it by waiting on the status file; see
+  `test-runner/launch/README.md`. The installer PRs wrap the same `lib/` folder with a bundled runtime.
 
 The spike that proved the patching route on the real jars was PR #113, closed unmerged as planned: nothing of
 RuneLite's or Jagex's enters this repo, in git or in a release.
