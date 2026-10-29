@@ -24,6 +24,13 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
@@ -227,6 +234,57 @@ public class ConnectGuardTest
 	}
 
 	@Test
+	public void anAttemptDuringALookUpWaitsForItRatherThanTakingTheOldAddresses() throws Exception
+	{
+		AtomicReference<String> address = new AtomicReference<>("192.0.2.10");
+		AtomicLong now = new AtomicLong();
+		AtomicBoolean slow = new AtomicBoolean();
+		CountDownLatch inLookUp = new CountDownLatch(1);
+		CountDownLatch letLookUpFinish = new CountDownLatch(1);
+		ConnectGuard.Resolver resolver = host ->
+		{
+			if (slow.get())
+			{
+				inLookUp.countDown();
+				try
+				{
+					letLookUpFinish.await(10, TimeUnit.SECONDS);
+				}
+				catch (InterruptedException e)
+				{
+					Thread.currentThread().interrupt();
+				}
+			}
+			return new InetAddress[]{InetAddress.getByName(address.get())};
+		};
+		guard = new ConnectGuard(List.of("odinsgate.net:43594"), log, resolver, now::get);
+		assertEquals(List.of(Proxy.NO_PROXY), guard.select(URI.create("socket://192.0.2.10:43594")));
+
+		// The name moves and the window passes; the next look-up is slow, and a second attempt arrives during it.
+		address.set("192.0.2.11");
+		now.addAndGet(ConnectGuard.RESOLVE_AGAIN_AFTER_NANOS);
+		slow.set(true);
+		ExecutorService pool = Executors.newFixedThreadPool(2);
+		try
+		{
+			Future<List<Proxy>> first = pool.submit(() -> guard.select(URI.create("socket://192.0.2.10:43594")));
+			assertTrue(inLookUp.await(10, TimeUnit.SECONDS), "the first attempt is in the look-up");
+			Future<List<Proxy>> second = pool.submit(() -> guard.select(URI.create("socket://192.0.2.10:43594")));
+			assertThrows(TimeoutException.class, () -> second.get(300, TimeUnit.MILLISECONDS),
+				"the second attempt waits for the look-up instead of taking the old addresses");
+			letLookUpFinish.countDown();
+			assertEquals(Proxy.Type.SOCKS, refused(first.get(10, TimeUnit.SECONDS)).type(), "the old address is gone");
+			assertEquals(Proxy.Type.SOCKS, refused(second.get(10, TimeUnit.SECONDS)).type(), "for both");
+			assertEquals(List.of(Proxy.NO_PROXY), guard.select(URI.create("socket://192.0.2.11:43594")));
+		}
+		finally
+		{
+			letLookUpFinish.countDown();
+			pool.shutdownNow();
+		}
+	}
+
+	@Test
 	public void endpointsAreValidatedAndNoneAtAllIsRefused()
 	{
 		for (String bad : List.of("odinsgate.net", "odinsgate.net:", ":43594", "odinsgate.net:0", "odinsgate.net:70000",
@@ -240,6 +298,11 @@ public class ConnectGuardTest
 		assertTrue(ConnectGuard.isLoopback("127.0.0.1") && ConnectGuard.isLoopback("127.1.2.3")
 			&& ConnectGuard.isLoopback("localhost") && ConnectGuard.isLoopback("::1"));
 		assertFalse(ConnectGuard.isLoopback("odinsgate.net") || ConnectGuard.isLoopback("192.168.0.210")
-			|| ConnectGuard.isLoopback("127.example.com"), "a name is never loopback, whatever it starts with");
+			|| ConnectGuard.isLoopback("127.example.com") || ConnectGuard.isLoopback("127.0.0.999"),
+			"a name is never loopback, whatever it starts with, and four numbers over 255 are a name");
+		assertTrue(ConnectGuard.isIpv4("192.168.0.210") && ConnectGuard.isLiteral("::1")
+			&& ConnectGuard.isLiteral("2001:db8::1"));
+		assertFalse(ConnectGuard.isIpv4("192.168.0.256") || ConnectGuard.isIpv4("1.2.3")
+			|| ConnectGuard.isIpv4("1.2.3.4.5") || ConnectGuard.isLiteral("odinsgate.net"));
 	}
 }

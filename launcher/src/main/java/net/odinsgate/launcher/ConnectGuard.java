@@ -12,6 +12,8 @@ import java.net.Socket;
 import java.net.SocketAddress;
 import java.net.URI;
 import java.net.UnknownHostException;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -20,6 +22,7 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.LongSupplier;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
@@ -41,10 +44,8 @@ import java.util.regex.Pattern;
  */
 public final class ConnectGuard extends ProxySelector implements Closeable
 {
-	/** A dotted IPv4 literal. */
-	private static final Pattern IPV4 = Pattern.compile("\\d+\\.\\d+\\.\\d+\\.\\d+");
-	/** A dotted IPv4 literal, or an IPv6 one, which is never resolved. */
-	private static final Pattern LITERAL = Pattern.compile("\\d+\\.\\d+\\.\\d+\\.\\d+|.*:.*");
+	/** Four decimal octets: the shape of an IPv4 literal, whose octets {@link #isIpv4} then checks. */
+	private static final Pattern IPV4 = Pattern.compile("(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})");
 	/** How long a look-up of the allowed names stands before an address that asks makes the guard look again. */
 	static final long RESOLVE_AGAIN_AFTER_NANOS = 10_000_000_000L;
 
@@ -60,7 +61,8 @@ public final class ConnectGuard extends ProxySelector implements Closeable
 	private final InetSocketAddress refuserAddress;
 	private final Set<String> seen = ConcurrentHashMap.newKeySet();
 	private final AtomicInteger refusedConnections = new AtomicInteger();
-	private final Map<String, Set<String>> resolved = new ConcurrentHashMap<>();
+	/** Each allowed name's addresses with its port: one snapshot, replaced whole by {@link #resolveAll}. */
+	private volatile Map<String, Set<String>> resolved = Map.of();
 	private final Resolver resolver;
 	private final LongSupplier clock;
 	private volatile long resolvedAt;
@@ -172,7 +174,7 @@ public final class ConnectGuard extends ProxySelector implements Closeable
 	static boolean isLoopback(String host)
 	{
 		return host.equals("localhost") || host.equals("::1") || host.equals("0:0:0:0:0:0:0:1")
-			|| (host.startsWith("127.") && IPV4.matcher(host).matches());
+			|| (host.startsWith("127.") && isIpv4(host));
 	}
 
 	private boolean allowed(String host, int port)
@@ -182,7 +184,7 @@ public final class ConnectGuard extends ProxySelector implements Closeable
 		{
 			return true;
 		}
-		if (!LITERAL.matcher(host).matches())
+		if (!isLiteral(host))
 		{
 			// A name not on the list is never allowed; only an address can stand for a listed name.
 			return false;
@@ -190,10 +192,7 @@ public final class ConnectGuard extends ProxySelector implements Closeable
 		// An address stands for an allowed name only while the name resolves to it. Once the last look-up is old,
 		// look the names up again before answering, whether the address is known (the name may have left it) or
 		// not (the name may have moved to it), but never for every attempt.
-		if (clock.getAsLong() - resolvedAt >= RESOLVE_AGAIN_AFTER_NANOS)
-		{
-			resolveAll();
-		}
+		refreshIfOld();
 		return resolvedContains(endpoint);
 	}
 
@@ -210,35 +209,78 @@ public final class ConnectGuard extends ProxySelector implements Closeable
 	}
 
 	/**
-	 * Each allowed name's addresses, with its port. A name that doesn't resolve right now keeps the addresses it
-	 * last had, so a DNS hiccup doesn't cut a running game off; it is always allowed by name.
+	 * Looks the names up again once the last look-up is old. An attempt that arrives while a look-up runs waits
+	 * for it here, so none is answered from the addresses the look-up is about to replace.
 	 */
-	private void resolveAll()
+	private synchronized void refreshIfOld()
 	{
-		resolvedAt = clock.getAsLong();
+		if (clock.getAsLong() - resolvedAt >= RESOLVE_AGAIN_AFTER_NANOS)
+		{
+			resolveAll();
+		}
+	}
+
+	/**
+	 * Each allowed name's addresses, with its port, as a new snapshot published whole, then the time of the look-up,
+	 * so a reader that sees the new time sees the new addresses. A name that doesn't resolve right now keeps the
+	 * addresses it last had, so a DNS hiccup doesn't cut a running game off; it is always allowed by name.
+	 */
+	private synchronized void resolveAll()
+	{
+		Map<String, Set<String>> fresh = new HashMap<>();
 		for (String endpoint : endpoints)
 		{
 			int colon = endpoint.lastIndexOf(':');
 			String host = endpoint.substring(0, colon);
 			String port = endpoint.substring(colon + 1);
-			if (LITERAL.matcher(host).matches())
+			if (isLiteral(host))
 			{
 				continue;
 			}
 			try
 			{
-				Set<String> addresses = ConcurrentHashMap.newKeySet();
+				Set<String> addresses = new HashSet<>();
 				for (InetAddress address : resolver.resolve(host))
 				{
 					addresses.add(host(address.getHostAddress()) + ":" + port);
 				}
-				resolved.put(endpoint, addresses);
+				fresh.put(endpoint, Set.copyOf(addresses));
 			}
 			catch (UnknownHostException e)
 			{
 				// Offline, or a name that isn't one yet: the last addresses and the name itself stay allowed.
+				Set<String> last = resolved.get(endpoint);
+				if (last != null)
+				{
+					fresh.put(endpoint, last);
+				}
 			}
 		}
+		resolved = Map.copyOf(fresh);
+		resolvedAt = clock.getAsLong();
+	}
+
+	/** An IPv4 literal (four octets, each 0-255) or an IPv6 one: an address, never looked up as a name. */
+	static boolean isLiteral(String host)
+	{
+		return isIpv4(host) || host.indexOf(':') >= 0;
+	}
+
+	static boolean isIpv4(String host)
+	{
+		Matcher octets = IPV4.matcher(host);
+		if (!octets.matches())
+		{
+			return false;
+		}
+		for (int i = 1; i <= 4; i++)
+		{
+			if (Integer.parseInt(octets.group(i)) > 255)
+			{
+				return false;
+			}
+		}
+		return true;
 	}
 
 	private void refuse()
