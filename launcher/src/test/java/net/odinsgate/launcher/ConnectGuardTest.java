@@ -21,6 +21,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.security.Security;
 import java.time.Duration;
 import java.util.List;
 import java.util.Set;
@@ -127,6 +128,8 @@ public class ConnectGuardTest
 		{
 			guard = ConnectGuard.install(List.of("odinsgate.net:43594"), log);
 			assertTrue(ProxySelector.getDefault() == guard);
+			assertEquals("10", Security.getProperty("networkaddress.cache.ttl"),
+				"the JVM's name cache keeps an answer no longer than the guard's window");
 
 			// Allowed by the loopback rule: a direct connection, which the listener sees.
 			try (Socket socket = new Socket())

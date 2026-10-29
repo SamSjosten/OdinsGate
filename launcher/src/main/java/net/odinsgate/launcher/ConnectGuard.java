@@ -12,6 +12,7 @@ import java.net.Socket;
 import java.net.SocketAddress;
 import java.net.URI;
 import java.net.UnknownHostException;
+import java.security.Security;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -47,7 +48,8 @@ public final class ConnectGuard extends ProxySelector implements Closeable
 	/** Four decimal octets: the shape of an IPv4 literal, whose octets {@link #isIpv4} then checks. */
 	private static final Pattern IPV4 = Pattern.compile("(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})");
 	/** How long a look-up of the allowed names stands before an address that asks makes the guard look again. */
-	static final long RESOLVE_AGAIN_AFTER_NANOS = 10_000_000_000L;
+	static final long RESOLVE_AGAIN_AFTER_SECONDS = 10;
+	static final long RESOLVE_AGAIN_AFTER_NANOS = RESOLVE_AGAIN_AFTER_SECONDS * 1_000_000_000L;
 
 	/** How a name becomes addresses: {@link InetAddress#getAllByName} outside the tests. */
 	interface Resolver
@@ -100,9 +102,15 @@ public final class ConnectGuard extends ProxySelector implements Closeable
 		resolveAll();
 	}
 
-	/** Makes the guard and sets it as the JVM's default selector; the previous one is not consulted again. */
+	/**
+	 * Makes the guard and sets it as the JVM's default selector; the previous one is not consulted again. The JVM's
+	 * own name cache is given the guard's window too (it would otherwise hand a look-up the old answer for 30
+	 * seconds), so a name that moves is seen to move by the guard and by the game, which resolves through the same
+	 * cache, within the same ten seconds. This must run before the JVM's first look-up, which reads the setting once.
+	 */
 	public static ConnectGuard install(List<String> endpoints, PrintStream log) throws IOException
 	{
+		Security.setProperty("networkaddress.cache.ttl", Long.toString(RESOLVE_AGAIN_AFTER_SECONDS));
 		ConnectGuard guard = new ConnectGuard(endpoints, log);
 		ProxySelector.setDefault(guard);
 		return guard;
