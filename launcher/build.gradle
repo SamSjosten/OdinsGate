@@ -29,6 +29,13 @@ tasks.withType(JavaCompile).configureEach {
 	options.release.set(21)
 }
 
+jar {
+	manifest {
+		// Main-Class is the launcher itself; the child JVM's entry point (Loader) is named on its command line.
+		attributes 'Main-Class': 'net.odinsgate.launcher.Main', 'Implementation-Version': version
+	}
+}
+
 test {
 	useJUnitPlatform()
 }
