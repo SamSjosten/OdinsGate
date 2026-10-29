@@ -4,6 +4,7 @@ import java.awt.Toolkit;
 import java.awt.datatransfer.StringSelection;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
+import java.io.IOException;
 import java.io.PrintStream;
 import java.time.Clock;
 import java.util.HashMap;
@@ -39,6 +40,16 @@ public final class LauncherWindow
 	public static int open(LauncherRun.Session session, LauncherRun.Steps steps, boolean firstRun, Clock clock,
 		PrintStream log)
 	{
+		return open(session, steps, firstRun, clock, log, () -> { });
+	}
+
+	/**
+	 * @param healthy run once the window is on screen: the launcher got this far, which is what the self-update
+	 * bootstrap wants to know of a version it handed off to ({@link Updater})
+	 */
+	public static int open(LauncherRun.Session session, LauncherRun.Steps steps, boolean firstRun, Clock clock,
+		PrintStream log, Runnable healthy)
+	{
 		ScheduledExecutorService pool = Executors.newScheduledThreadPool(3, task ->
 		{
 			Thread thread = new Thread(task, "launcher-worker");
@@ -52,6 +63,7 @@ public final class LauncherWindow
 			try
 			{
 				show(session, steps, firstRun, clock, pool, closed);
+				healthy.run();
 			}
 			catch (RuntimeException | Error e)
 			{
@@ -81,6 +93,34 @@ public final class LauncherWindow
 	 * {@link LauncherRun.Session#waitFor} destroys the game, and the window closing is not the game's end. The
 	 * launcher's exit leaves the game's process running on its own; the threads are daemons and go with the JVM.
 	 */
+	/**
+	 * The one thing the window says when the release needs a newer installer than this one: {@code why}, the
+	 * installer line and a button to the download page, which is built in ({@link Updater#DOWNLOAD_PAGE}). Returns
+	 * when the friend closes it.
+	 */
+	static void installerNeeded(String why, PrintStream log)
+	{
+		javax.swing.JLabel text = new javax.swing.JLabel();
+		text.putClientProperty(LauncherPanel.HTML_OFF, Boolean.TRUE);
+		text.setText(Main.INSTALLER_LINE + " (" + why + ")");
+		String[] choices = {"Open the download page", "Close"};
+		int chosen = javax.swing.JOptionPane.showOptionDialog(null, text, Names.APP_NAME,
+			javax.swing.JOptionPane.DEFAULT_OPTION, javax.swing.JOptionPane.INFORMATION_MESSAGE, null, choices,
+			choices[0]);
+		if (chosen == 0)
+		{
+			try
+			{
+				java.awt.Desktop.getDesktop().browse(Updater.DOWNLOAD_PAGE);
+			}
+			catch (IOException | RuntimeException e)
+			{
+				log.println("[launcher] the download page could not be opened: " + e.getMessage() + "; it is "
+					+ Updater.DOWNLOAD_PAGE);
+			}
+		}
+	}
+
 	static void stop(ScheduledExecutorService pool)
 	{
 		pool.shutdown();

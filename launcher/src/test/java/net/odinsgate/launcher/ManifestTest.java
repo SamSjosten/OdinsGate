@@ -33,6 +33,41 @@ public class ManifestTest
 	}
 
 	@Test
+	public void aManifestMayNameANewPrimaryKey() throws Exception
+	{
+		assertEquals(null, Manifest.parse(good()).nextPrimaryKey);
+		String spki;
+		try
+		{
+			spki = java.util.Base64.getEncoder().encodeToString(
+				java.security.KeyPairGenerator.getInstance("Ed25519").generateKeyPair().getPublic().getEncoded());
+		}
+		catch (java.security.NoSuchAlgorithmException e)
+		{
+			throw new AssertionError(e);
+		}
+		String withKeys =
+			good().replace("\"format\": 1,", "\"format\": 1, \"keys\": { \"primary\": \" " + spki + " \" },");
+		assertEquals(spki, Manifest.parse(withKeys).nextPrimaryKey, "trimmed");
+		rejected(good().replace("\"format\": 1,", "\"format\": 1, \"keys\": { \"primary\": \"not a key\" },"));
+		rejected(good().replace("\"format\": 1,", "\"format\": 1, \"keys\": \"nope\","));
+		assertEquals(null, Manifest.parse(good().replace("\"format\": 1,", "\"format\": 1, \"keys\": {},"))
+			.nextPrimaryKey, "an empty keys object names nothing");
+	}
+
+	@Test
+	public void theFormatIsReadBeforeAnythingElseIsBelieved()
+	{
+		assertEquals(1, Manifest.formatOf(good()));
+		assertEquals(2, Manifest.formatOf("{ \"format\": 2, \"anything\": \"else\" }"));
+		assertEquals(-1, Manifest.formatOf("{ \"version\": \"0.1.0\" }"));
+		assertEquals(-1, Manifest.formatOf("{ \"format\": \"two\" }"));
+		assertEquals(-1, Manifest.formatOf("{ \"format\": 1.5 }"));
+		assertEquals(-1, Manifest.formatOf("[1]"));
+		assertEquals(-1, Manifest.formatOf("not json"));
+	}
+
+	@Test
 	public void theGoodManifestParsesWhole() throws Exception
 	{
 		Manifest manifest = Manifest.parse(good());

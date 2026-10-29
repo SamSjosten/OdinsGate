@@ -92,8 +92,8 @@ The core that later PRs build on; no window or releases yet:
   in `<data>/logs/game.log` (exit 21 when it can't), wait, and exit with the game's own code. A `Session` holds
   the steps; `run` takes them straight through with nobody at the screen, which is what `--auto` (the test VM, CI)
   and a machine without a display get, and the window takes them one at a time. Every state goes to the log and,
-  with `--status-file`, the status file. Until the release PR ships the signed manifest, `--manifest <file>` names
-  a local one, trusted as it is.
+  with `--status-file`, the status file. `--manifest <file>` names a local manifest, trusted as it is, with no
+  update looked for: the VM's own, or the accepted one the shell hands a downloaded version (below).
 - `Screen`, `WindowRun`, `LauncherPanel` and `LauncherWindow`: the window a friend sees. `Screen` is the whole of
   it as a state machine with no Swing in it: what to show (status, detail, busy, Play, Retry, the notice, the
   first-run line) and what to do next (check, fetch, launch, retry after thirty seconds), driven by events (each
@@ -136,6 +136,32 @@ The core that later PRs build on; no window or releases yet:
   `ok` or `FAIL` line per check; exit 0, 1 when a check failed, 2 for a bad call. The tests run it against a fake
   static host, repository and config on loopback, signed by a throwaway key, and check that no jar is ever fetched;
   one reads the server's real table and finds the proven 241 pin in it.
+- Self-update (`Updater`, `VersionLoader`, `Versions`): what the installed launcher, the thin shell under the
+  installer's runtime, does before anything else when run without `--manifest`. It fetches the latest release's
+  `manifest.json` and `.sig` from this repo's GitHub Releases (`releases/latest/download/`, redirects followed; the
+  server isn't involved, so updates reach friends while it is down), takes the manifest only when its signature
+  verifies against the trusted keys (the built-in primary and offline backup, or a primary that a backup-signed
+  manifest's `keys.primary` named since, kept in `<data>/keys.json`), refuses one older than the last accepted (an
+  emergency rollback ships as a newer version), and keeps the accepted copy under `<data>` for a start with no
+  internet; the installer's own copy under `app/` serves a first start offline. A newer `format`, or a
+  `minBootstrapVersion` above the shell's version, stops with "Please download the new installer." and the
+  built-in download page (exit 67, a dialog with the link for a friend). A newer version is downloaded whole to
+  `versions/<v>.downloading/`, each file checked against its SHA-256 and size, moved into `versions/<v>/` (moves
+  tried five times, half a second apart, for a file antivirus holds), and only then does the `current` pointer
+  switch, written atomically. Before each launch the chosen version is hashed again against the signed manifest
+  kept beside it; a broken pointer or file falls back to the newest version that verifies, and when none does, to
+  the shell itself, which also runs when it is the newest. The chosen version runs in the same JVM
+  (`VersionLoader`: its `lib/*.jar` on a class loader over the platform loader, `Main.run(String[], PrintStream)`
+  by reflection, the one contract between a shell and every later version), handed the shell's arguments plus
+  `--manifest <accepted>` and `--healthy <marker>`. The shell writes `.started` before the hand-off and the
+  version writes `.healthy` once its window is up or its steps under way; a version started and never healthy at
+  the next run (a crash), or not healthy within the watchdog's sixty seconds (a hang), or that can't load at all,
+  goes on `<data>/bad-versions.txt`: never run or downloaded again, until a newer version is released. Until the
+  release PR ships the public keys, `TrustedKeys` is empty and a run without `--manifest` says so and stops. The
+  tests run the updater against a fake GitHub with throwaway keys, one per failure: a tampered manifest, an older
+  one, a crash or a hang before healthy, a bad version offered again, a corrupt pointer, a 404, a missing jar, a
+  held file, the backup key naming a new primary, and an unsigned "please reinstall"; the loader runs ASM-built
+  fake versions, and `Main` is seen handing off to one.
 - The installed layout and the test VM: `installDist` (part of `build`) lays the launcher out the way it is run,
   `build/install/odinsgate-launcher/bin/odinsgate-launcher(.bat)` over `lib/*.jar`, and CI uploads that folder as
   the `odinsgate-launcher` artifact. The test VM runs it from `C:\RSPS\launcher\app` through the `OdinsGate`

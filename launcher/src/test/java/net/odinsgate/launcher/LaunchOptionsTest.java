@@ -21,6 +21,14 @@ public class LaunchOptionsTest
 	private static final Path HOME = Path.of("/home/friend");
 
 	@Test
+	public void theHealthyMarkerIsAnAbsolutePath()
+	{
+		LaunchOptions options = LaunchOptions.parse(List.of("--healthy", "marks/.healthy"));
+		assertEquals(Path.of("marks/.healthy").toAbsolutePath().normalize(), options.healthy());
+		assertEquals(null, LaunchOptions.NONE.healthy());
+	}
+
+	@Test
 	public void noArgumentsIsFriendMode()
 	{
 		LaunchOptions options = LaunchOptions.parse(List.of());
