@@ -35,6 +35,16 @@ The core that later PRs build on; no window, downloads or releases yet:
   `--developer-mode`, which is what lets the sideloaded test-runner plugin load.
 - `Names` and `NamesTest`: every friend-visible name in one place, held to the rule that none may contain RuneScape,
   OSRS, Jagex, -scape or RSPS in any case, and the module's file names with them.
+- `Bootstrap`, `RuneLiteSignature` and `RuneLiteCache`: the pinned RuneLite download. The manifest's pin names a
+  static.runelite.net commit and its bootstrap's SHA-256; the cache fetches that bootstrap, requires both the pinned
+  hash and RuneLite's own SHA256withRSA signature (checked against the committed `runelite.crt`, BSD-2 from
+  runelite/launcher - the key alone, no validity window, like RuneLite's own launcher, so the pin outlives the
+  certificate's April 2027 notAfter), and only then parses it. Jars download from RuneLite's own servers into our
+  data folder, one subfolder per pinned commit - never the friend's real RuneLite cache - and every jar is hashed
+  against the verified bootstrap before every launch, so a healthy cache starts the game with no network at all and
+  a tampered file is refetched or, fresh off the network, stops the launch. `prune` keeps only the pins the manifest
+  still names. The tests run the production verify path against committed copies of RuneLite's real revision-241
+  release files (`bootstrap-241.json` and its signature), so the chain is proven end to end without the network.
 
 The spike that proved the patching route on the real jars was PR #113, closed unmerged as planned: nothing of
 RuneLite's or Jagex's enters this repo, in git or in a release.
