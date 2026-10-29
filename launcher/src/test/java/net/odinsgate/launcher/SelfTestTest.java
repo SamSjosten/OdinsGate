@@ -79,6 +79,8 @@ public class SelfTestTest
 		try
 		{
 			Manifest manifest = Manifest.parse(SelfTest.manifest(server));
+			assertEquals("127.0.0.1", server.host(), "IPv4 by the numbers, whatever the JVM's address preference");
+			assertEquals("127.0.0.1", manifest.server.host());
 			assertEquals(server.gamePort(), manifest.server.gamePort());
 			assertEquals(241, manifest.pin(241).revision());
 			ServerCheck.Status status = new ServerCheck(server.host(), server.httpPort(), server.gamePort(),

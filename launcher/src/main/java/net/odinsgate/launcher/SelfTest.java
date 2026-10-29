@@ -288,10 +288,15 @@ public final class SelfTest
 	/**
 	 * Our server on loopback, as far as a check and the child look: {@code /status.json} up at {@link #REVISION}
 	 * and taking logins, {@code /proxy-targets.yaml} with the manifest's key, and a game port that accepts and
-	 * closes.
+	 * closes. Bound to {@value #LOOPBACK} by the numbers, never to {@code InetAddress.getLoopbackAddress()}: with
+	 * {@code -Djava.net.preferIPv6Addresses=true} (a friend's {@code JAVA_TOOL_OPTIONS}, say) that is {@code ::1},
+	 * which the manifest's host rule doesn't take and a URL would need in brackets.
 	 */
 	static final class FakeServer
 	{
+		static final String LOOPBACK = "127.0.0.1";
+		private static final byte[] LOOPBACK_BYTES = {127, 0, 0, 1};
+
 		private final HttpServer web;
 		private final ServerSocket game;
 		private final Thread accepting;
@@ -319,7 +324,7 @@ public final class SelfTest
 
 		static FakeServer start() throws IOException
 		{
-			InetAddress loopback = InetAddress.getLoopbackAddress();
+			InetAddress loopback = InetAddress.getByAddress(LOOPBACK, LOOPBACK_BYTES);
 			HttpServer web = HttpServer.create(new InetSocketAddress(loopback, 0), 0);
 			web.createContext("/", exchange ->
 			{
@@ -350,7 +355,7 @@ public final class SelfTest
 
 		String host()
 		{
-			return web.getAddress().getAddress().getHostAddress();
+			return LOOPBACK;
 		}
 
 		int httpPort()
