@@ -96,6 +96,33 @@ public class PreflightTest
 	}
 
 	@Test
+	public void aPropertyNameThatNothingReadsIsRefused() throws Exception
+	{
+		// The name sits in a constant field, but no System.getProperty takes it: that is not a read.
+		List<Path> jars = List.of(
+			FakeClient.injectedJar(dir, FakeClient.injectedClient()),
+			FakeClient.clientJarWithUnreadProperty(dir));
+		Preflight scan = Preflight.scan(jars, FakeClient.OUR_MODULUS);
+		assertFalse(scan.complete());
+		assertTrue(scan.missing().stream().anyMatch(m -> m.contains(Preflight.HTTP_SERVICE_URL)),
+			() -> scan.missing().toString());
+	}
+
+	@Test
+	public void aJagexHostCheckWeDontPatchIsRefused() throws Exception
+	{
+		// downloadConfig checks ".jagex.net" instead: not our literal, so nothing would be patched, and the check
+		// left in place could send RuneLite to its fallback config. That is a missing point, not "absent".
+		List<Path> jars = List.of(
+			FakeClient.injectedJar(dir, FakeClient.injectedClient()),
+			FakeClient.clientJar(dir, FakeClient.clientLoaderWithRenamedJagexHost()));
+		Preflight scan = Preflight.scan(jars, FakeClient.OUR_MODULUS);
+		assertFalse(scan.complete());
+		assertTrue(scan.missing().stream().anyMatch(m -> m.contains("downloadConfig") && m.contains("Jagex")),
+			() -> scan.missing().toString());
+	}
+
+	@Test
 	public void aNonHexModulusIsAProgrammingError()
 	{
 		assertThrows(IllegalArgumentException.class,

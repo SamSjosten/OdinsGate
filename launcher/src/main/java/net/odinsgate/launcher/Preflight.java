@@ -10,16 +10,21 @@ import java.util.Enumeration;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
 import java.util.regex.Pattern;
 import org.objectweb.asm.ClassReader;
+import org.objectweb.asm.Opcodes;
 import org.objectweb.asm.tree.AbstractInsnNode;
 import org.objectweb.asm.tree.ClassNode;
 import org.objectweb.asm.tree.FieldNode;
+import org.objectweb.asm.tree.FrameNode;
+import org.objectweb.asm.tree.LabelNode;
 import org.objectweb.asm.tree.LdcInsnNode;
+import org.objectweb.asm.tree.LineNumberNode;
 import org.objectweb.asm.tree.MethodInsnNode;
 import org.objectweb.asm.tree.MethodNode;
 
@@ -267,6 +272,7 @@ public final class Preflight
 		new ClassReader(bytes).accept(node, 0);
 		List<String> methods = node.methods.stream().map(m -> m.name + m.desc).toList();
 		int inDownloadConfig = 0;
+		int otherJagexHosts = 0;
 		for (MethodNode method : node.methods)
 		{
 			if (!(method.name + method.desc).equals(DOWNLOAD_CONFIG))
@@ -275,9 +281,17 @@ public final class Preflight
 			}
 			for (AbstractInsnNode insn : method.instructions)
 			{
-				if (insn instanceof LdcInsnNode ldc && JAGEX_HOST.equals(ldc.cst))
+				if (!(insn instanceof LdcInsnNode ldc) || !(ldc.cst instanceof String value))
+				{
+					continue;
+				}
+				if (JAGEX_HOST.equals(value))
 				{
 					inDownloadConfig++;
+				}
+				else if (value.toLowerCase(Locale.ROOT).contains("jagex"))
+				{
+					otherJagexHosts++;
 				}
 			}
 		}
@@ -294,6 +308,15 @@ public final class Preflight
 			missing.add("ClientLoader has no " + DOWNLOAD_CONFIG);
 			return;
 		}
+		if (otherJagexHosts > 0)
+		{
+			// No ".jagex.com" is fine (the public source has none), but another Jagex literal in the one method that
+			// checks the config's host means the check moved: left in place it could fail on our host and send
+			// RuneLite to its fallback config, which names Jagex's servers.
+			missing.add("ClientLoader.downloadConfig checks a Jagex host this launcher doesn't patch ("
+				+ otherJagexHosts + " literal(s))");
+			return;
+		}
 		if (inDownloadConfig > 0)
 		{
 			patch(CLIENT_LOADER).addRule(new ClassPatch.Rule("jagex host check", JAGEX_HOST, "", DOWNLOAD_CONFIG,
@@ -303,13 +326,54 @@ public final class Preflight
 
 	private void scanProperty(byte[] bytes, String className, String value, String why)
 	{
-		boolean found = bytes != null && Constants.of(new ClassReader(bytes)).strings().contains(value);
+		boolean found = bytes != null && readsProperty(bytes, value);
 		report.add(className.substring(className.lastIndexOf('/') + 1) + ": reads \"" + value + "\" "
 			+ (found ? "yes, so " + why : "NOT FOUND"));
 		if (!found)
 		{
 			missing.add(className + " does not read \"" + value + "\"");
 		}
+	}
+
+	/**
+	 * Whether the class passes {@code value} to {@code System.getProperty}: an {@code ldc} of it followed, within the
+	 * next few instructions (a default value's expression at most), by that call. The name merely sitting in the
+	 * constant pool, in a field or a dead branch, is not a read.
+	 */
+	private static boolean readsProperty(byte[] bytes, String value)
+	{
+		ClassNode node = new ClassNode();
+		new ClassReader(bytes).accept(node, 0);
+		for (MethodNode method : node.methods)
+		{
+			for (AbstractInsnNode insn : method.instructions)
+			{
+				if (insn instanceof LdcInsnNode ldc && value.equals(ldc.cst) && reachesGetProperty(ldc))
+				{
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+
+	private static boolean reachesGetProperty(AbstractInsnNode insn)
+	{
+		int steps = 0;
+		for (AbstractInsnNode next = insn.getNext(); next != null && steps < 6; next = next.getNext())
+		{
+			if (next instanceof LabelNode || next instanceof LineNumberNode || next instanceof FrameNode)
+			{
+				continue;
+			}
+			if (next instanceof MethodInsnNode call && call.getOpcode() == Opcodes.INVOKESTATIC
+				&& call.owner.equals("java/lang/System") && call.name.equals("getProperty"))
+			{
+				return true;
+			}
+			steps++;
+		}
+		return false;
 	}
 
 	/** How often a class uses a string constant, in {@code ldc} instructions and constant fields. */
