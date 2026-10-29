@@ -343,6 +343,12 @@ public final class LauncherRun
 			return game;
 		}
 
+		/** Reports a stop the steps above didn't: a step that threw what it shouldn't have, in the window. */
+		public void fail(String why)
+		{
+			report.fail(why);
+		}
+
 		/** Waits for the game and returns its exit code ({@link #EXIT_START} if interrupted). */
 		public int waitFor(Process game)
 		{

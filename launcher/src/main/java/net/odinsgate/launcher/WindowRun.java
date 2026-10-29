@@ -220,7 +220,10 @@ public final class WindowRun
 		ui.later(() -> on(new Screen.Event.Exited(code)));
 	}
 
-	/** A worker task whose unexpected failure stops the screen with the message instead of leaving it busy. */
+	/**
+	 * A worker task whose unexpected failure stops the screen with the message instead of leaving it busy, and
+	 * reaches the log and the status file as the run's failure, like a stop the steps report themselves.
+	 */
 	private Runnable guarded(Runnable task)
 	{
 		return () ->
@@ -231,7 +234,9 @@ public final class WindowRun
 			}
 			catch (RuntimeException e)
 			{
-				ui.later(() -> on(new Screen.Event.Failed(message(e))));
+				String why = message(e);
+				session.fail("unexpected: " + why);
+				ui.later(() -> on(new Screen.Event.Failed(why)));
 			}
 		};
 	}

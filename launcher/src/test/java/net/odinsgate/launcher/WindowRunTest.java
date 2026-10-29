@@ -359,6 +359,9 @@ public class WindowRunTest
 		assertEquals("the probe list is empty", last().detail());
 		assertFalse(last().busy());
 		assertTrue(last().canRetry());
+		assertEquals(List.of("STARTING", "CHECKING", "FAILED"), states(), "the log and status file stop too");
+		assertTrue(logBytes.toString(StandardCharsets.UTF_8).contains("FAILED: unexpected: the probe list is empty"),
+			logBytes.toString(StandardCharsets.UTF_8));
 	}
 
 	@Test
