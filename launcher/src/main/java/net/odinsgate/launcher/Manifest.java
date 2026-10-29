@@ -26,8 +26,13 @@ import java.util.regex.Pattern;
  *   "server": { "host": "odinsgate.net", "gamePort": 43594, "httpPort": 43595, "modulus": "993466dd...c51" },
  *   "pins": [ { "revision": 241, "runelite": "1.13.4", "commit": "1e634e64...48d",
  *               "bootstrapSha256": "25f22ff8...b2a" } ],
- *   "files": [ { "path": "lib/odinsgate-launcher-0.1.0.jar", "sha256": "...", "size": 123456 } ] }
+ *   "files": [ { "path": "lib/odinsgate-launcher-0.1.0.jar", "sha256": "...", "size": 123456 } ],
+ *   "keys": { "primary": "MCowBQYDK2VwAyEA..." } }
  * </pre>
+ *
+ * {@code keys} is optional: a manifest signed by the offline backup key may name a new primary key there (base64
+ * SubjectPublicKeyInfo), which the updater then trusts in place of the old one, so a lost or leaked primary never
+ * strands a friend ({@link Updater}).
  *
  * Validation here is strict because every value is used somewhere dangerous: the commit goes into a URL, the hashes
  * gate what runs, the modulus is patched into the client, and each file path is written under the launcher's folder.
@@ -56,6 +61,8 @@ public final class Manifest
 	public final String minBootstrapVersion;
 	public final Server server;
 	public final List<FileEntry> files;
+	/** {@code keys.primary}, the base64 of a new primary key's SubjectPublicKeyInfo, or null when there is none. */
+	public final String nextPrimaryKey;
 	private final Map<Integer, Pin> pins;
 
 	/** Where the game is, and the key the client must be patched to. Plain data from this host is hints only. */
@@ -74,13 +81,14 @@ public final class Manifest
 	}
 
 	private Manifest(String version, String minBootstrapVersion, Server server, Map<Integer, Pin> pins,
-		List<FileEntry> files)
+		List<FileEntry> files, String nextPrimaryKey)
 	{
 		this.version = version;
 		this.minBootstrapVersion = minBootstrapVersion;
 		this.server = server;
 		this.pins = pins;
 		this.files = files;
+		this.nextPrimaryKey = nextPrimaryKey;
 	}
 
 	/** The pin for a revision the server reports, or null when this manifest doesn't know the revision yet. */
@@ -174,7 +182,56 @@ public final class Manifest
 			}
 		}
 
-		return new Manifest(version, minBootstrapVersion, server, pins, List.copyOf(files.values()));
+		String nextPrimaryKey = null;
+		if (root.has("keys") && !root.get("keys").isJsonNull())
+		{
+			JsonElement keys = root.get("keys");
+			if (!keys.isJsonObject())
+			{
+				throw new ManifestException("\"keys\" isn't an object");
+			}
+			if (keys.getAsJsonObject().has("primary"))
+			{
+				nextPrimaryKey = string(keys.getAsJsonObject(), "primary").trim();
+				try
+				{
+					Signatures.publicKey(nextPrimaryKey);
+				}
+				catch (IllegalArgumentException e)
+				{
+					throw new ManifestException("\"keys.primary\" isn't an Ed25519 public key: " + e.getMessage());
+				}
+			}
+		}
+		return new Manifest(version, minBootstrapVersion, server, pins, List.copyOf(files.values()), nextPrimaryKey);
+	}
+
+	/**
+	 * The {@code format} a manifest claims, read before anything else is believed about it, so a verified manifest
+	 * of a newer format can say "please download the new installer" rather than "this doesn't read"; -1 when the
+	 * text isn't a JSON object with a whole-number {@code format}.
+	 */
+	public static long formatOf(String json)
+	{
+		try
+		{
+			JsonElement parsed = JsonParser.parseString(json);
+			if (!parsed.isJsonObject() || !parsed.getAsJsonObject().has("format"))
+			{
+				return -1;
+			}
+			JsonElement format = parsed.getAsJsonObject().get("format");
+			if (!format.isJsonPrimitive() || !format.getAsJsonPrimitive().isNumber())
+			{
+				return -1;
+			}
+			double value = format.getAsDouble();
+			return value == Math.rint(value) && value >= 0 ? (long) value : -1;
+		}
+		catch (JsonSyntaxException | IllegalStateException e)
+		{
+			return -1;
+		}
 	}
 
 	private static JsonObject object(String json) throws ManifestException
