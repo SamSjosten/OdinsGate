@@ -42,6 +42,12 @@ public final class Main
 		Updater updater(Path dataDir, PrintStream log);
 	}
 
+	/** The launch once the manifest is settled; a test's records the call instead of checking a server. */
+	interface Launches
+	{
+		int launch(LaunchOptions options, Manifest manifest, Path dataDir, PrintStream log);
+	}
+
 	private Main()
 	{
 	}
@@ -64,6 +70,12 @@ public final class Main
 	 */
 	static int run(String[] args, PrintStream out, Updaters updaters)
 	{
+		return run(args, out, updaters, null);
+	}
+
+	/** As above, with the launch itself made by {@code launches}; null for the real one. */
+	static int run(String[] args, PrintStream out, Updaters updaters, Launches launches)
+	{
 		LaunchOptions options;
 		try
 		{
@@ -85,6 +97,8 @@ public final class Main
 		Path userHome = Path.of(System.getProperty("user.home"));
 		Path dataDir = options.dataDir(platform, env, userHome);
 		Clock clock = Clock.systemUTC();
+		Launches launcher = launches != null ? launches
+			: (o, manifest, d, l) -> launch(o, manifest, platform, env, userHome, d, clock, l);
 		try (PrintStream log = openLog(dataDir, out))
 		{
 			if (options.manifest() != null)
@@ -99,7 +113,7 @@ public final class Main
 					log.println("[launcher] " + options.manifest() + ": " + e.getMessage());
 					return EXIT_MANIFEST;
 				}
-				return launch(options, manifest, platform, env, userHome, dataDir, clock, log);
+				return launcher.launch(options, manifest, dataDir, log);
 			}
 			Updater updater = updaters.updater(dataDir, log);
 			Updater.Outcome outcome = updater.update();
@@ -130,7 +144,7 @@ public final class Main
 					handed[args.length + 2] = "--healthy";
 					handed[args.length + 3] = updater.healthyMarker(run.version()).toString();
 					log.println("[launcher] " + VERSION + " handing off to version " + run.version());
-					return VersionLoader.run(run.versionDir(), handed, out);
+					return VersionLoader.run(run.jars(), handed, out);
 				}
 				catch (IOException e)
 				{
@@ -139,7 +153,7 @@ public final class Main
 					log.println("[launcher] running the installed launcher " + VERSION + " instead");
 				}
 			}
-			return launch(options, run.manifest(), platform, env, userHome, dataDir, clock, log);
+			return launcher.launch(options, run.manifest(), dataDir, log);
 		}
 	}
 
