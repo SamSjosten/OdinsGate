@@ -69,22 +69,60 @@ public class RotatingLogTest
 		assertEquals("run 1", Files.readString(RotatingLog.aside(log, 3)));
 	}
 
+	/** The real moves, except the one from {@code from} to {@code to}, which fails. */
+	private static RotatingLog.Mover failingAt(Path from, Path to)
+	{
+		return (a, b) ->
+		{
+			if (a.equals(from) && b.equals(to))
+			{
+				throw new java.io.IOException(a + " is being used by another process");
+			}
+			Files.move(a, b, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+		};
+	}
+
+	private void threeRuns(Path log) throws Exception
+	{
+		Files.writeString(RotatingLog.aside(log, 1), "run 3");
+		Files.writeString(RotatingLog.aside(log, 2), "run 2");
+		Files.writeString(RotatingLog.aside(log, 3), "run 1");
+		Files.writeString(log, "run 4 " + "x".repeat(100));
+	}
+
+	private void nothingChanged(Path log) throws Exception
+	{
+		assertTrue(Files.readString(log).startsWith("run 4"), "the live log is back where it was");
+		assertEquals("run 3", Files.readString(RotatingLog.aside(log, 1)));
+		assertEquals("run 2", Files.readString(RotatingLog.aside(log, 2)));
+		assertEquals("run 1", Files.readString(RotatingLog.aside(log, 3)), "the oldest was not dropped");
+		assertFalse(Files.exists(log.resolveSibling("game.log.moving")), "nothing is left under the moving name");
+		assertFalse(Files.exists(log.resolveSibling("game.log.dropping")), "nor under the dropping name");
+	}
+
 	@Test
-	public void olderLogsThatCannotShiftPutTheLiveLogBack() throws Exception
+	public void anOlderLogThatCannotShiftUndoesTheWholeRotation() throws Exception
 	{
 		Path log = dir.resolve("game.log");
-		Files.writeString(RotatingLog.aside(log, 1), "run 2");
-		Files.writeString(RotatingLog.aside(log, 2), "run 1");
-		Files.writeString(log, "run 3 " + "x".repeat(100));
-		// The oldest name taken by a folder with something in it: dropping it fails, after the live log has moved.
-		Path blocked = RotatingLog.aside(log, 3);
-		Files.createDirectories(blocked);
-		Files.writeString(blocked.resolve("in-the-way"), "");
-		assertThrows(java.io.IOException.class, () -> RotatingLog.rotate(log, 100, 3));
-		assertTrue(Files.readString(log).startsWith("run 3"), "the live log is back where it was");
-		assertFalse(Files.exists(log.resolveSibling("game.log.moving")), "nothing is left under the moving name");
-		assertEquals("run 2", Files.readString(RotatingLog.aside(log, 1)));
-		assertEquals("run 1", Files.readString(RotatingLog.aside(log, 2)));
+		threeRuns(log);
+		// .1 held open (an antivirus scan, say) once the live log has moved and the oldest has been set aside.
+		assertThrows(java.io.IOException.class,
+			() -> RotatingLog.rotate(log, 100, 3, failingAt(RotatingLog.aside(log, 1), RotatingLog.aside(log, 2))));
+		nothingChanged(log);
+
+		// The last move failing, with every older log already shifted, is undone the same way.
+		assertThrows(java.io.IOException.class,
+			() -> RotatingLog.rotate(log, 100, 3, failingAt(log.resolveSibling("game.log.moving"),
+				RotatingLog.aside(log, 1))));
+		nothingChanged(log);
+
+		// Nothing in the way: the whole chain goes through and the oldest is gone.
+		RotatingLog.rotate(log, 100, 3);
+		assertFalse(Files.exists(log));
+		assertTrue(Files.readString(RotatingLog.aside(log, 1)).startsWith("run 4"));
+		assertEquals("run 3", Files.readString(RotatingLog.aside(log, 2)));
+		assertEquals("run 2", Files.readString(RotatingLog.aside(log, 3)));
+		assertFalse(Files.exists(log.resolveSibling("game.log.dropping")));
 	}
 
 	@Test

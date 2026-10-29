@@ -8,6 +8,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
+import java.util.ArrayDeque;
+import java.util.Deque;
 
 /**
  * The launcher's log files, kept from growing without end: a file over {@link #MAX_BYTES} is moved aside when it is
@@ -26,46 +28,73 @@ final class RotatingLog
 	{
 	}
 
+	/** One file move; the real one is {@link Files#move} replacing, a test's can fail where it likes. */
+	interface Mover
+	{
+		void move(Path from, Path to) throws IOException;
+	}
+
 	/**
-	 * Moves {@code file} aside when it has reached {@code maxBytes}, keeping {@code keep} older ones. The live file
-	 * moves first, to a {@code .moving} name: it is the one move that can fail (a game that still holds it open on
-	 * Windows), and when it does nothing else has been touched, so the older files are not shifted or dropped by a
-	 * launcher that tries again and again. Should the older files fail to shift after that, the live file is put
-	 * back where it was, so nothing is ever left under the {@code .moving} name.
+	 * Moves {@code file} aside when it has reached {@code maxBytes}, keeping {@code keep} older ones. Every step is
+	 * a rename, and the rotation is all or nothing: the live file moves first, to a {@code .moving} name (it is the
+	 * one move that can fail in the ordinary course, a game that still holds it open on Windows, and then nothing
+	 * else has been touched); the oldest file moves to a {@code .dropping} name rather than being deleted; the rest
+	 * shift up; and only once all of that has gone through is the dropped one deleted. A failure anywhere undoes
+	 * every move made, newest first, so a launcher that tries again and again never wears the older logs away.
 	 */
 	static void rotate(Path file, long maxBytes, int keep) throws IOException
+	{
+		rotate(file, maxBytes, keep, (from, to) -> Files.move(from, to, StandardCopyOption.REPLACE_EXISTING));
+	}
+
+	static void rotate(Path file, long maxBytes, int keep, Mover mover) throws IOException
 	{
 		if (!Files.isRegularFile(file) || Files.size(file) < maxBytes)
 		{
 			return;
 		}
 		Path moving = file.resolveSibling(file.getFileName() + ".moving");
-		Files.move(file, moving, StandardCopyOption.REPLACE_EXISTING);
+		Path dropping = file.resolveSibling(file.getFileName() + ".dropping");
+		Deque<Path[]> done = new ArrayDeque<>();
 		try
 		{
-			Files.deleteIfExists(aside(file, keep));
+			step(mover, done, file, moving);
+			if (Files.exists(aside(file, keep)))
+			{
+				step(mover, done, aside(file, keep), dropping);
+			}
 			for (int i = keep - 1; i >= 1; i--)
 			{
-				Path older = aside(file, i);
-				if (Files.exists(older))
+				if (Files.exists(aside(file, i)))
 				{
-					Files.move(older, aside(file, i + 1), StandardCopyOption.REPLACE_EXISTING);
+					step(mover, done, aside(file, i), aside(file, i + 1));
 				}
 			}
-			Files.move(moving, aside(file, 1), StandardCopyOption.REPLACE_EXISTING);
+			step(mover, done, moving, aside(file, 1));
 		}
 		catch (IOException e)
 		{
-			try
+			while (!done.isEmpty())
 			{
-				Files.move(moving, file, StandardCopyOption.REPLACE_EXISTING);
-			}
-			catch (IOException putBack)
-			{
-				e.addSuppressed(putBack);
+				Path[] made = done.removeLast();
+				try
+				{
+					mover.move(made[1], made[0]);
+				}
+				catch (IOException undo)
+				{
+					e.addSuppressed(undo);
+				}
 			}
 			throw e;
 		}
+		Files.deleteIfExists(dropping);
+	}
+
+	private static void step(Mover mover, Deque<Path[]> done, Path from, Path to) throws IOException
+	{
+		mover.move(from, to);
+		done.addLast(new Path[]{from, to});
 	}
 
 	/** Opens {@code file} for appending, rotated first, with every line also written to {@code alsoTo}. */
