@@ -5,6 +5,7 @@ import java.awt.Component;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.Font;
+import java.awt.Window;
 import javax.swing.BorderFactory;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
@@ -13,6 +14,7 @@ import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JProgressBar;
 import javax.swing.JTextArea;
+import javax.swing.SwingUtilities;
 import javax.swing.UIManager;
 
 /**
@@ -101,6 +103,34 @@ public final class LauncherPanel extends JPanel
 		retry.setEnabled(view.canRetry());
 		revalidate();
 		repaint();
+		makeRoom();
+	}
+
+	/**
+	 * Grows the window around this panel when a view needs more than the window has: the notice and the first-run
+	 * line appear after the window was packed, and a long detail line would otherwise be clipped. The window is
+	 * never made smaller, so a window the friend enlarged stays that way.
+	 */
+	private void makeRoom()
+	{
+		Window window = SwingUtilities.getWindowAncestor(this);
+		if (window == null)
+		{
+			return;
+		}
+		Dimension has = window.getSize();
+		Dimension needs = roomFor(has, window.getPreferredSize());
+		if (!needs.equals(has))
+		{
+			window.setSize(needs);
+			window.validate();
+		}
+	}
+
+	/** The size a window of {@code has} needs to show {@code wants}: each side the larger of the two. */
+	static Dimension roomFor(Dimension has, Dimension wants)
+	{
+		return new Dimension(Math.max(has.width, wants.width), Math.max(has.height, wants.height));
 	}
 
 	JButton playButton()

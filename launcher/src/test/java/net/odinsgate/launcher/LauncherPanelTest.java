@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.awt.Dimension;
 import java.util.concurrent.atomic.AtomicInteger;
 import javax.swing.JLabel;
 import javax.swing.JTextArea;
@@ -53,6 +54,22 @@ public class LauncherPanelTest
 		assertTrue(panel.playButton().isEnabled());
 		assertFalse(panel.busy());
 		assertEquals(" ", panel.detailLabel().getText(), "an empty line keeps its height");
+	}
+
+	@Test
+	public void aViewThatNeedsMoreRoomGrowsTheWindowAndNeverShrinksIt()
+	{
+		assertEquals(new Dimension(500, 200), LauncherPanel.roomFor(new Dimension(400, 200), new Dimension(500, 150)));
+		assertEquals(new Dimension(400, 260), LauncherPanel.roomFor(new Dimension(400, 200), new Dimension(380, 260)));
+		assertEquals(new Dimension(400, 200), LauncherPanel.roomFor(new Dimension(400, 200), new Dimension(300, 100)),
+			"a window the friend enlarged keeps its size");
+
+		LauncherPanel panel = new LauncherPanel(() -> {}, () -> {});
+		panel.render(view(Screen.Phase.CHECKING, "Checking the server…", "", true, false, false, "", false));
+		int plain = panel.getPreferredSize().width;
+		panel.render(view(Screen.Phase.CHECKING, "Checking the server…", "", true, false, false, "", true));
+		assertTrue(panel.getPreferredSize().width > plain, "the first-run line asks for its full width, unclipped");
+		assertTrue(panel.getPreferredSize().width >= panel.firstRunLabel().getPreferredSize().width);
 	}
 
 	@Test

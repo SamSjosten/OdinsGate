@@ -99,10 +99,12 @@ public final class LauncherWindow
 		run[0] = new WindowRun(new Screen(false, firstRun), session, steps::notice, WindowRun.Worker.threads(pool),
 			SwingUtilities::invokeLater, panel::render, clock);
 		frame.setContentPane(panel);
+		// The first view (the check under way, the first-run line when it applies) is drawn before the frame is
+		// sized, so the frame opens with room for it; what appears later (the notice, a detail) grows the frame.
+		run[0].start();
 		frame.pack();
 		frame.setMinimumSize(frame.getSize());
 		frame.setLocationRelativeTo(null);
 		frame.setVisible(true);
-		run[0].start();
 	}
 }
