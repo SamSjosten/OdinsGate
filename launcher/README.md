@@ -221,6 +221,9 @@ Friends install one file for their system and nothing else: the installer carrie
   release.yml's `windows` job): the tasks above on windows-latest, then the installer itself: installed silently,
   the installed launcher's `--self-test` run and its log printed, and uninstalled again. build.yml uploads the
   installer as the `OdinsGate-Setup` artifact, which is what a test VM installs; a release carries it as an asset.
+  The unit tests run on Linux in the `launcher` job, not here: eight of them aren't Windows-clean yet (println's
+  line separator in expected text, `/absolute` paths, jars a class loader still holds when the temp folder goes),
+  a follow-up that then puts Windows in the test matrix.
 - Tests: `SelfTestTest` runs the self-test on the test JVM (a JDK, so the real child JVM starts) and sees each
   failure once, `ImageScanTest` scans a made-up image with one thing spoiled per test, `NamesTest` holds the Inno
   Setup script, `package.gradle`, the allowed list and the notices to the names rule, and `LoaderTest` runs the
