@@ -179,7 +179,7 @@ public final class RuneLiteCache
 		Files.move(temp, file, StandardCopyOption.REPLACE_EXISTING);
 	}
 
-	private static void deleteTree(Path tree) throws IOException
+	static void deleteTree(Path tree) throws IOException
 	{
 		try (var files = Files.walk(tree))
 		{

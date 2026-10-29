@@ -126,6 +126,16 @@ The core that later PRs build on; no window or releases yet:
   revision mid-session through the real `Session` and the hand-cranked driver, both for a pinned and an unpinned
   revision, and feed the report logs with passwords in them. On the VM, `OdinsGate.cmd` now sends the launcher's
   console to `logs\console.log`, since `logs\launcher.log` is the launcher's own.
+- Pin health: `PinHealth` (`./gradlew -p launcher pinHealth`, run by `.github/workflows/pin-health.yml` weekly and on
+  a pull request touching the pins or the check) takes the server's `src/main/resources/runelite-pins.json`, the same
+  table the manifest's pins come from, and asks RuneLite's servers whether each pin still holds: the bootstrap
+  carries the pinned SHA-256 and RuneLite's signature (through `RuneLiteCache` itself, into a scratch folder deleted
+  after), every jar it names for any system answers a HEAD request with the bootstrap's size, and RuneLite's runtime
+  config (`static.runelite.net/config.json`, whose `outdatedClientVersions` would put an update message over a
+  client that read it) doesn't name the pinned version. HEAD only: no jar is downloaded or cached in Actions. One
+  `ok` or `FAIL` line per check; exit 0, 1 when a check failed, 2 for a bad call. The tests run it against a fake
+  static host, repository and config on loopback, signed by a throwaway key, and check that no jar is ever fetched;
+  one reads the server's real table and finds the proven 241 pin in it.
 - The installed layout and the test VM: `installDist` (part of `build`) lays the launcher out the way it is run,
   `build/install/odinsgate-launcher/bin/odinsgate-launcher(.bat)` over `lib/*.jar`, and CI uploads that folder as
   the `odinsgate-launcher` artifact. The test VM runs it from `C:\RSPS\launcher\app` through the `OdinsGate`
