@@ -125,6 +125,26 @@ public class ScreenTest
 	}
 
 	@Test
+	public void losingTheInternetDuringAnOutageStopsTheOutagesClock()
+	{
+		Screen screen = new Screen(false, false);
+		screen.start();
+		screen.on(checked(OFFLINE, T0));
+		screen.on(new Screen.Event.Retry());
+		screen.on(checked(new ServerCheck.Result.NoInternet(), after(Duration.ofMinutes(1))));
+		assertEquals("Can't reach the internet. Check your connection.", screen.view().status());
+		screen.on(new Screen.Event.Tick(after(Duration.ofMinutes(1).plusSeconds(5))));
+		assertEquals("Can't reach the internet. Check your connection.", screen.view().status(),
+			"a tick keeps the internet line, not the outage's");
+		assertEquals("Trying again in 25 seconds.", screen.view().detail());
+
+		screen.on(new Screen.Event.Retry());
+		screen.on(checked(OFFLINE, after(Duration.ofMinutes(10))));
+		assertEquals("The server is offline or restarting.", screen.view().status(),
+			"the outage starts over once the server can be asked again");
+	}
+
+	@Test
 	public void aRevisionTheLauncherDoesNotKnowStopsUntilItsUpdate()
 	{
 		Screen screen = new Screen(false, false);

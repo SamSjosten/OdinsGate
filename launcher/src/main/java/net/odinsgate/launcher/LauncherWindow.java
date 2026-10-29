@@ -62,13 +62,23 @@ public final class LauncherWindow
 		{
 			Thread.currentThread().interrupt();
 		}
-		pool.shutdownNow();
+		stop(pool);
 		if (failure[0] != null)
 		{
 			log.println("[launcher] the window could not be shown: " + WindowRun.message(failure[0]));
 			return LauncherRun.EXIT_START;
 		}
 		return 0;
+	}
+
+	/**
+	 * Lets the worker go without interrupting it: the thread waiting on the game must not be, since an interrupted
+	 * {@link LauncherRun.Session#waitFor} destroys the game, and the window closing is not the game's end. The
+	 * launcher's exit leaves the game's process running on its own; the threads are daemons and go with the JVM.
+	 */
+	static void stop(ScheduledExecutorService pool)
+	{
+		pool.shutdown();
 	}
 
 	private static void show(LauncherRun.Session session, LauncherRun.Steps steps, boolean firstRun, Clock clock,

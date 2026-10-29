@@ -239,6 +239,8 @@ public final class Screen
 			}
 			case ServerCheck.Result.NoInternet noInternet ->
 			{
+				// Whether the server is up can't be told from here, so the outage's clock stops with its message.
+				offlineSince = null;
 				return waiting("Can't reach the internet. Check your connection.", now);
 			}
 			case ServerCheck.Result.UnknownRevision unknown ->
