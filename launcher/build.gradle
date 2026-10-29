@@ -1,0 +1,30 @@
+// The Odin's Gate launcher, which will replace RSProx for friends. Its own Gradle build, like test-runner, so a
+// launcher change never rebuilds or restarts the game server (deploy/auto-deploy.sh skips launcher/). The package is
+// net.odinsgate, not the server's, and nothing a friend can see may contain the banned words (NamesTest).
+plugins {
+	id 'java'
+}
+
+repositories {
+	mavenCentral()
+}
+
+dependencies {
+	implementation 'com.google.code.gson:gson:2.13.1'
+
+	testImplementation platform('org.junit:junit-bom:5.12.2')
+	testImplementation 'org.junit.jupiter:junit-jupiter'
+	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+group = 'net.odinsgate'
+version = '0.1.0'
+
+tasks.withType(JavaCompile).configureEach {
+	options.encoding = 'UTF-8'
+	options.release.set(21)
+}
+
+test {
+	useJUnitPlatform()
+}
