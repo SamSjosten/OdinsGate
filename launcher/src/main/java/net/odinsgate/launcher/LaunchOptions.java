@@ -17,10 +17,13 @@ import java.util.Map;
  * --server host:port[:httpPort]  another server than the signed manifest's: the staging server on VM 214's spare
  *                                ports. The game port is patched into the client; httpPort defaults to port + 1,
  *                                the way our server pairs them. The key stays the manifest's.
+ * --manifest &lt;file&gt;              a local manifest to launch from, trusted as it is: the VM's, until the release
+ *                                PR ships the signed one and the installer's built-in copy
  * </pre>
  * Parsing is all this class does; nothing here touches a file or the network.
  */
-public record LaunchOptions(boolean auto, boolean developerMode, Path home, Path statusFile, ServerOverride server)
+public record LaunchOptions(boolean auto, boolean developerMode, Path home, Path statusFile, ServerOverride server,
+	Path manifest)
 {
 	/** {@code --server}'s value: where to dial instead of the manifest's server. */
 	public record ServerOverride(String host, int gamePort, int httpPort)
@@ -28,9 +31,9 @@ public record LaunchOptions(boolean auto, boolean developerMode, Path home, Path
 	}
 
 	public static final String USAGE = "arguments: [--auto] [--dev] [--home <dir>] [--status-file <file>]"
-		+ " [--server host:port[:httpPort]]";
+		+ " [--server host:port[:httpPort]] [--manifest <file>]";
 
-	public static final LaunchOptions NONE = new LaunchOptions(false, false, null, null, null);
+	public static final LaunchOptions NONE = new LaunchOptions(false, false, null, null, null, null);
 
 	/** Parses the launcher's arguments; an {@link IllegalArgumentException} names the bad one and gives the usage. */
 	public static LaunchOptions parse(List<String> args)
@@ -40,6 +43,7 @@ public record LaunchOptions(boolean auto, boolean developerMode, Path home, Path
 		Path home = null;
 		Path statusFile = null;
 		ServerOverride server = null;
+		Path manifest = null;
 		for (int i = 0; i < args.size(); i++)
 		{
 			String arg = args.get(i);
@@ -50,10 +54,11 @@ public record LaunchOptions(boolean auto, boolean developerMode, Path home, Path
 				case "--home" -> home = path(value(args, ++i, arg));
 				case "--status-file" -> statusFile = path(value(args, ++i, arg));
 				case "--server" -> server = parseServer(value(args, ++i, arg));
+				case "--manifest" -> manifest = path(value(args, ++i, arg));
 				default -> throw new IllegalArgumentException("unknown argument \"" + arg + "\"; " + USAGE);
 			}
 		}
-		return new LaunchOptions(auto, developerMode, home, statusFile, server);
+		return new LaunchOptions(auto, developerMode, home, statusFile, server, manifest);
 	}
 
 	/** The server this launch dials: the override when one was given, else the signed one, and always its key. */

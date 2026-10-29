@@ -39,8 +39,8 @@ public final class StatusFile
 	 * @param version the launcher's own version
 	 * @param state where the launcher is
 	 * @param detail a line for a person, or null
-	 * @param revision the server's revision once the check has it, or null
-	 * @param gamePid the game process once it is started, or null
+	 * @param revision the server's revision once the check has it (an unpinned one included), or null
+	 * @param gamePid the game process once it is started, kept through its exit, or null
 	 * @param at when this status was written
 	 */
 	public record Status(String version, State state, String detail, Integer revision, Long gamePid, Instant at)

@@ -28,6 +28,7 @@ public class LaunchOptionsTest
 		assertFalse(options.auto());
 		assertFalse(options.developerMode());
 		assertNull(options.statusFile());
+		assertNull(options.manifest());
 		assertSame(SIGNED, options.launchServer(SIGNED), "the signed server, untouched");
 		assertEquals(LINUX.dataDir(Map.of(), HOME), options.dataDir(LINUX, Map.of(), HOME));
 	}
@@ -36,11 +37,13 @@ public class LaunchOptionsTest
 	public void everyFlagIsRead()
 	{
 		LaunchOptions options = LaunchOptions.parse(List.of("--auto", "--dev", "--home", "/vm/launcher",
-			"--status-file", "/vm/launcher/status.json", "--server", "staging.odinsgate.net:44594"));
+			"--status-file", "/vm/launcher/status.json", "--server", "staging.odinsgate.net:44594",
+			"--manifest", "/vm/launcher/manifest.json"));
 		assertTrue(options.auto());
 		assertTrue(options.developerMode());
 		assertEquals(Path.of("/vm/launcher"), options.home());
 		assertEquals(Path.of("/vm/launcher/status.json"), options.statusFile());
+		assertEquals(Path.of("/vm/launcher/manifest.json"), options.manifest());
 		assertEquals(new LaunchOptions.ServerOverride("staging.odinsgate.net", 44594, 44595), options.server());
 		assertEquals(Path.of("/vm/launcher"), options.dataDir(LINUX, Map.of(), HOME), "--home wins over the system");
 
