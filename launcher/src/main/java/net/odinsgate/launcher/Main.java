@@ -1,5 +1,6 @@
 package net.odinsgate.launcher;
 
+import java.awt.GraphicsEnvironment;
 import java.io.File;
 import java.io.IOException;
 import java.io.PrintStream;
@@ -13,11 +14,11 @@ import java.util.Map;
 import java.util.regex.Pattern;
 
 /**
- * The launcher's own entry point, what the installer's executable and the test VM's scripts start. For now every
- * run is the headless {@link LauncherRun}: the window (its own PR) will take over when {@code --auto} is not given,
- * and the signed manifest from GitHub (the release PR) will replace {@code --manifest}. The runtime this JVM runs
- * on is the one the game gets (the bundled runtime keeps {@code bin/java}), and this JVM's class path is the
- * loader's.
+ * The launcher's own entry point, what the installer's executable and the test VM's scripts start. A friend gets
+ * the window ({@link LauncherWindow}); {@code --auto} (the test VM, CI) and a machine without a display get the
+ * same steps straight through with nobody at the screen ({@link LauncherRun#run}). The signed manifest from GitHub
+ * (the release PR) will replace {@code --manifest}. The runtime this JVM runs on is the one the game gets (the
+ * bundled runtime keeps {@code bin/java}), and this JVM's class path is the loader's.
  */
 public final class Main
 {
@@ -68,8 +69,20 @@ public final class Main
 		Map<String, String> env = System.getenv();
 		Path userHome = Path.of(System.getProperty("user.home"));
 		Path dataDir = options.dataDir(platform, env, userHome);
-		LauncherRun run = new LauncherRun(VERSION, LauncherRun.real(dataDir), Clock.systemUTC());
-		return run.run(options, manifest, platform, env, userHome, thisJvm(), out);
+		Clock clock = Clock.systemUTC();
+		LauncherRun.Steps steps = LauncherRun.real(dataDir);
+		LauncherRun run = new LauncherRun(VERSION, steps, clock);
+		LauncherRun.Session session = run.session(options, manifest, platform, env, userHome, thisJvm(), out);
+		if (options.auto())
+		{
+			return run.run(session);
+		}
+		if (GraphicsEnvironment.isHeadless())
+		{
+			out.println("[launcher] no display here: running without the window");
+			return run.run(session);
+		}
+		return LauncherWindow.open(session, steps, session.firstRun(), clock, out);
 	}
 
 	/** This JVM's runtime and class path: what the game's child JVM is started from. */

@@ -86,12 +86,33 @@ The core that later PRs build on; no window or releases yet:
   `java.net.http` request and check the count. Its limit: NIO `SocketChannel` and a native library's own sockets
   never ask the selector. The client connects with `Socket` and RuneLite's HTTP goes through OkHttp, which both
   do; the jars are not yet scanned for `SocketChannel` use (a `Preflight` check for it is a follow-up).
-- `Main` and `LauncherRun`: the launcher's entry point (the jar's `Main-Class`) and the headless run it makes for
-  now, the sequence the window will drive step by step later: check the server (hints only; each outcome has its
-  own exit code, 10-14), fetch the pinned RuneLite into `<data>/runelite/<commit>/` (exit 20 when it can't), plan
-  the launch, start the game's child JVM with its output in `<data>/logs/game.log` (exit 21 when it can't), wait,
-  and exit with the game's own code. Every state goes to the log and, with `--status-file`, the status file. Until
-  the release PR ships the signed manifest, `--manifest <file>` names a local one, trusted as it is.
+- `Main` and `LauncherRun`: the launcher's entry point (the jar's `Main-Class`) and one run's steps, in order:
+  check the server (hints only; each outcome has its own exit code, 10-14), fetch the pinned RuneLite into
+  `<data>/runelite/<commit>/` (exit 20 when it can't), plan the launch, start the game's child JVM with its output
+  in `<data>/logs/game.log` (exit 21 when it can't), wait, and exit with the game's own code. A `Session` holds
+  the steps; `run` takes them straight through with nobody at the screen, which is what `--auto` (the test VM, CI)
+  and a machine without a display get, and the window takes them one at a time. Every state goes to the log and,
+  with `--status-file`, the status file. Until the release PR ships the signed manifest, `--manifest <file>` names
+  a local one, trusted as it is.
+- `Screen`, `WindowRun`, `LauncherPanel` and `LauncherWindow`: the window a friend sees. `Screen` is the whole of
+  it as a state machine with no Swing in it: what to show (status, detail, busy, Play, Retry, the notice, the
+  first-run line) and what to do next (check, fetch, launch, retry after thirty seconds), driven by events (each
+  check outcome, fetched, launched, exited, the buttons, a tick, the notice). The messages are the plan's: an
+  offline server is "offline or restarting" and tried again every thirty seconds with a countdown, after five
+  minutes the line says for how long; a full server and no internet wait the same way; a revision the launcher
+  doesn't pin yet stops with "its update is on its way"; a changed key stops with "Please tell Sam" and nothing
+  starts; a download or start that fails shows its reason, and Retry starts over from the check; after the game
+  closes, Play checks again and starts it without a second click. `WindowRun` runs the screen's commands against
+  a `Session` on a worker thread pool and hands the answers back on the window's thread, with the retry timer and
+  the once-a-second countdown cancelled the moment a check starts. `LauncherPanel` draws a view and nothing more;
+  its labels have Swing's HTML rendering switched off and the notice is a text area, so a notice holding `<html>`
+  shows the tag. `LauncherWindow` is the frame (titled Odin's Gate) around them. The notice is `launcher/notice.txt`
+  on main, read from raw.githubusercontent.com over HTTPS with a five-second timeout, 4 KB at most and cut to 500
+  characters on screen, so a line reaches friends without a deploy and while the server is down; a notice that
+  can't be fetched is no notice, never a stop. The tests drive the state machine through every outcome, the driver
+  over a real `Session` with a hand-cranked worker, and the panel headless; the frame itself opens on a display
+  only, which the installer PRs' `--self-test` will do on each system. The launcher closes with the window for
+  now; staying open through the game's run, with the restart prompt and the problem report, is the next PR.
 - The installed layout and the test VM: `installDist` (part of `build`) lays the launcher out the way it is run,
   `build/install/odinsgate-launcher/bin/odinsgate-launcher(.bat)` over `lib/*.jar`, and CI uploads that folder as
   the `odinsgate-launcher` artifact. The test VM runs it from `C:\RSPS\launcher\app` through the `OdinsGate`
