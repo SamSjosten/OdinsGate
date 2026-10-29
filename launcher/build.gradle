@@ -3,6 +3,10 @@
 // net.odinsgate, not the server's, and nothing a friend can see may contain the banned words (NamesTest).
 plugins {
 	id 'java'
+	// installDist lays the launcher out the way it is installed and run: bin/odinsgate-launcher(.bat) over lib/*.jar.
+	// The test VM runs that layout from C:\RSPS\launcher\app (test-runner/launch/OdinsGate.cmd); the installer PRs
+	// wrap the same lib/ folder with a bundled runtime.
+	id 'application'
 }
 
 repositories {
@@ -35,6 +39,14 @@ jar {
 		attributes 'Main-Class': 'net.odinsgate.launcher.Main', 'Implementation-Version': version
 	}
 }
+
+application {
+	applicationName = 'odinsgate-launcher'
+	mainClass = 'net.odinsgate.launcher.Main'
+}
+
+// build makes the installed layout too (build/install/odinsgate-launcher/), which CI uploads for the test VM.
+assemble.dependsOn installDist
 
 test {
 	useJUnitPlatform()
