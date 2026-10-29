@@ -24,6 +24,12 @@ public class VersionLoaderTest
 	private final ByteArrayOutputStream outBytes = new ByteArrayOutputStream();
 	private final PrintStream out = new PrintStream(outBytes, true, StandardCharsets.UTF_8);
 
+	/** What the version printed, with println's line separator as {@code \n} whatever the system. */
+	private String output()
+	{
+		return outBytes.toString(StandardCharsets.UTF_8).replace("\r\n", "\n");
+	}
+
 	/** A version folder with one jar under lib/, as its manifest would name it. */
 	private List<Path> version(String name, byte[] jar) throws IOException
 	{
@@ -46,7 +52,7 @@ public class VersionLoaderTest
 		ClassLoader before = Thread.currentThread().getContextClassLoader();
 		int code = VersionLoader.run(version, new String[]{"--auto", "--manifest", "m.json"}, out);
 		assertEquals(42, code);
-		assertEquals("fake 0.2.0: --auto --manifest m.json\n", outBytes.toString(StandardCharsets.UTF_8));
+		assertEquals("fake 0.2.0: --auto --manifest m.json\n", output());
 		assertSame(before, Thread.currentThread().getContextClassLoader(), "the context loader is put back");
 	}
 
@@ -94,6 +100,6 @@ public class VersionLoaderTest
 		jar("0.6.0", "0-stray.jar", FakeVersion.jar("stray", 7));
 		Path named = jar("0.6.0", "odinsgate-launcher-0.6.0.jar", FakeVersion.jar("named", 42));
 		assertEquals(42, VersionLoader.run(List.of(named), new String[]{"x"}, out));
-		assertEquals("named: x\n", outBytes.toString(StandardCharsets.UTF_8));
+		assertEquals("named: x\n", output());
 	}
 }

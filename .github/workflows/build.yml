@@ -63,6 +63,20 @@ jobs:
           path: launcher/build/install/odinsgate-launcher/
           if-no-files-found: error
 
+  # The launcher's tests on Windows, where friends run it: the same build as above, with nothing uploaded.
+  launcher-windows:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: gradle/actions/setup-gradle@v4
+      - shell: bash
+        run: ./gradlew -p launcher build
+
   # The Windows installer (launcher/README.md, "Installers"): the app image over a runtime that keeps bin/java, the
   # installer around it, the image's self-test and scan, and an install, self-test and uninstall of the installer on
   # the runner. The artifact is the installer, which a test VM installs.
