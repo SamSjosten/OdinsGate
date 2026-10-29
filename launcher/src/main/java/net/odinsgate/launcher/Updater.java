@@ -6,6 +6,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
@@ -23,7 +24,9 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.TreeMap;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Flow;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.regex.Pattern;
@@ -179,8 +182,9 @@ public final class Updater
 	/**
 	 * One GET over {@code http}, the whole answer within {@code timeout} (the client's own request timeout covers
 	 * the headers only; a body that stalls after them would otherwise hold the launcher before its window opens),
-	 * and at most {@code maxBytes} of it: a body whose Content-Length is already past that is dropped unread, one
-	 * without a length is read and measured.
+	 * and at most {@code maxBytes} of it: a body whose Content-Length is already past that is dropped unread, and
+	 * one without a length is counted as it comes and cut off the moment it passes the limit, so no more than that
+	 * is ever held.
 	 */
 	static Fetcher fetcher(HttpClient http, Duration timeout, long maxBytes)
 	{
@@ -190,7 +194,7 @@ public final class Updater
 			HttpResponse.BodyHandler<byte[]> bounded = info ->
 				info.headers().firstValueAsLong("content-length").orElse(0) > maxBytes
 					? HttpResponse.BodySubscribers.replacing(null)
-					: HttpResponse.BodySubscribers.ofByteArray();
+					: new Bounded(maxBytes);
 			CompletableFuture<HttpResponse<byte[]>> sent = http.sendAsync(request, bounded);
 			HttpResponse<byte[]> response;
 			try
@@ -225,12 +229,83 @@ public final class Updater
 		};
 	}
 
+	/**
+	 * Collects a body up to {@code maxBytes}; the first byte past that cancels the download and the body is null,
+	 * which the fetcher reports as more than a release file. Nothing bigger than the limit is ever held.
+	 */
+	private static final class Bounded implements HttpResponse.BodySubscriber<byte[]>
+	{
+		private final HttpResponse.BodySubscriber<byte[]> whole = HttpResponse.BodySubscribers.ofByteArray();
+		private final CompletableFuture<byte[]> body = new CompletableFuture<>();
+		private final long maxBytes;
+		private Flow.Subscription subscription;
+		private long received;
+
+		Bounded(long maxBytes)
+		{
+			this.maxBytes = maxBytes;
+		}
+
+		@Override
+		public CompletionStage<byte[]> getBody()
+		{
+			return body;
+		}
+
+		@Override
+		public void onSubscribe(Flow.Subscription subscription)
+		{
+			this.subscription = subscription;
+			whole.onSubscribe(subscription);
+		}
+
+		@Override
+		public void onNext(List<ByteBuffer> buffers)
+		{
+			for (ByteBuffer buffer : buffers)
+			{
+				received += buffer.remaining();
+			}
+			if (received > maxBytes)
+			{
+				subscription.cancel();
+				body.complete(null);
+				return;
+			}
+			whole.onNext(buffers);
+		}
+
+		@Override
+		public void onError(Throwable throwable)
+		{
+			whole.onError(throwable);
+			body.completeExceptionally(throwable);
+		}
+
+		@Override
+		public void onComplete()
+		{
+			whole.onComplete();
+			whole.getBody().whenComplete((bytes, throwable) ->
+			{
+				if (throwable == null)
+				{
+					body.complete(bytes);
+				}
+				else
+				{
+					body.completeExceptionally(throwable);
+				}
+			});
+		}
+	}
+
 	/** The whole decision: see the class comment. Never throws; what went wrong is in the log. */
 	public Outcome update()
 	{
 		listCrashedVersions();
-		repairKept(dataDir);
 		List<PublicKey> trusted = trustedKeys();
+		repairKept(dataDir, trusted);
 		if (trusted.isEmpty())
 		{
 			log.println("[updater] no release keys are built into this launcher: updates are off");
@@ -485,13 +560,16 @@ public final class Updater
 
 	/**
 	 * Finishes or undoes a {@link #keep} that stopped half way. Both {@code .new} files there: nothing had moved, so
-	 * the old pair stands and they go (the release is fetched again). The {@code .new} manifest alone: the signature
-	 * had moved and the manifest hadn't, so it is moved now and the pair is whole again.
+	 * the old pair stands and they go (the release is fetched again). The {@code .new} manifest alone: either the
+	 * signature had moved and the manifest hadn't, or the stop came while the manifest was being written, before
+	 * the signature was even staged. The signature in place tells which: the manifest is moved only when it
+	 * verifies against that signature, and goes otherwise, the old pair standing.
 	 */
-	private void repairKept(Path dir)
+	private void repairKept(Path dir, List<PublicKey> trusted)
 	{
 		Path newManifest = dir.resolve(MANIFEST_NAME + NEW_SUFFIX);
 		Path newSignature = dir.resolve(MANIFEST_NAME + NEW_SUFFIX + SIGNATURE_SUFFIX);
+		Path signature = dir.resolve(MANIFEST_NAME + SIGNATURE_SUFFIX);
 		try
 		{
 			if (Files.exists(newSignature))
@@ -501,11 +579,19 @@ public final class Updater
 			}
 			else if (Files.exists(newManifest))
 			{
-				Files.move(newManifest, dir.resolve(MANIFEST_NAME), StandardCopyOption.REPLACE_EXISTING);
-				log.println("[updater] finished keeping the accepted manifest, which a stop had left half moved");
+				if (Files.isRegularFile(signature) && Signatures.verify(Files.readAllBytes(newManifest),
+					Files.readString(signature, StandardCharsets.UTF_8), trusted))
+				{
+					Files.move(newManifest, dir.resolve(MANIFEST_NAME), StandardCopyOption.REPLACE_EXISTING);
+					log.println("[updater] finished keeping the accepted manifest, which a stop had left half moved");
+				}
+				else
+				{
+					Files.delete(newManifest);
+				}
 			}
 		}
-		catch (IOException e)
+		catch (IOException | RuntimeException e)
 		{
 			log.println("[updater] what a stop left of the accepted manifest could not be cleared: " + e.getMessage());
 		}
@@ -549,7 +635,7 @@ public final class Updater
 			Files.createDirectories(temp);
 			for (Manifest.FileEntry entry : accepted.manifest().files)
 			{
-				String asset = entry.path().substring(entry.path().lastIndexOf('/') + 1);
+				String asset = entry.assetName();
 				URI uri = URI.create(releases + "/download/v" + target + "/" + asset);
 				byte[] bytes = fetcher.fetch(uri);
 				if (bytes.length != entry.size() || !RuneLiteCache.sha256(bytes).equals(entry.sha256()))
@@ -624,7 +710,12 @@ public final class Updater
 	/** The downloaded versions that verify and aren't bad, newest first, each with the manifest kept beside it. */
 	private Map<String, Manifest> verifiedVersions(List<PublicKey> trusted)
 	{
-		Map<String, Manifest> versions = new TreeMap<>((a, b) -> Versions.compare(b, a));
+		// Newest first; names that compare equal (0.2 and 0.2.0) are still two folders, so the name breaks the tie.
+		Map<String, Manifest> versions = new TreeMap<>((a, b) ->
+		{
+			int byVersion = Versions.compare(b, a);
+			return byVersion != 0 ? byVersion : a.compareTo(b);
+		});
 		Path root = dataDir.resolve(VERSIONS_DIR);
 		if (!Files.isDirectory(root))
 		{

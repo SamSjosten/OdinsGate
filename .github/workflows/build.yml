@@ -17,11 +17,14 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
       - run: ./gradlew build
 
+  # The server VM's scripts: the deploy of main and the staging server, each played through on a made-up origin with a
+  # stand-in for docker.
   deploy-script:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - run: deploy/auto-deploy-test.sh
+      - run: deploy/staging-test.sh
 
   # The workflow scripts (.github/scripts): the merge conflict check (mergeable.yml) and the alert issues
   # (probe.yml, pin-health.yml) against a stand-in for GitHub's API, and the odinsgate probe against a status page
@@ -31,6 +34,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: node --test .github/scripts/*.test.js
+
+  # The launcher's version file against the pull request (.github/scripts/launcher-version.js): a change to the pin
+  # table or the server's modulus bumps it, and a bump is newer than the last and not released yet.
+  launcher-version:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: node .github/scripts/launcher-version.js "origin/${{ github.base_ref }}" HEAD
 
   launcher:
     runs-on: ubuntu-latest
