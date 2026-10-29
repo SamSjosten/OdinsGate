@@ -150,13 +150,17 @@ The core that later PRs build on; no window or releases yet:
   tried five times, half a second apart, for a file antivirus holds), and only then does the `current` pointer
   switch, written atomically. Before each launch the chosen version is hashed again against the signed manifest
   kept beside it; a broken pointer or file falls back to the newest version that verifies, and when none does, to
-  the shell itself, which also runs when it is the newest. The chosen version runs in the same JVM
-  (`VersionLoader`: its `lib/*.jar` on a class loader over the platform loader, `Main.run(String[], PrintStream)`
-  by reflection, the one contract between a shell and every later version), handed the shell's arguments plus
-  `--manifest <accepted>` and `--healthy <marker>`. The shell writes `.started` before the hand-off and the
-  version writes `.healthy` once its window is up or its steps under way; a version started and never healthy at
-  the next run (a crash), or not healthy within the watchdog's sixty seconds (a hang), or that can't load at all,
-  goes on `<data>/bad-versions.txt`: never run or downloaded again, until a newer version is released. Until the
+  the shell itself, which also runs when it is the newest. The accepted pair is written whole under `.new` names
+  and moved into place, a stop half way finished at the next start, and a pair that is no use anyway is stood in
+  for by the newest verified version's own kept manifest. The chosen version runs in the same JVM
+  (`VersionLoader`: the jars its signed manifest names, nothing else under `lib/`, on a class loader over the
+  platform loader, `Main.run(String[], PrintStream)` by reflection, the one contract between a shell and every
+  later version), handed the shell's arguments plus `--manifest <accepted>` and `--healthy <marker>`. The shell
+  writes `.started` (naming its process, so a second launcher opened meanwhile sees a start under way, not a
+  crash) before the hand-off and the version writes `.healthy` once its window is up or its steps under way; a
+  version started and never healthy at the next run (a crash), or not healthy within the watchdog's sixty seconds
+  (a hang), or that can't load at all, goes on `<data>/bad-versions.txt`: never run or downloaded again, until a
+  newer version is released. GitHub is given twenty seconds for each whole answer, headers and body. Until the
   release PR ships the public keys, `TrustedKeys` is empty and a run without `--manifest` says so and stops. The
   tests run the updater against a fake GitHub with throwaway keys, one per failure: a tampered manifest, an older
   one, a crash or a hang before healthy, a bad version offered again, a corrupt pointer, a 404, a missing jar, a

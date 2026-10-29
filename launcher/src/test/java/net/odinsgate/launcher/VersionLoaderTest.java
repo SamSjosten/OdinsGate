@@ -24,18 +24,25 @@ public class VersionLoaderTest
 	private final ByteArrayOutputStream outBytes = new ByteArrayOutputStream();
 	private final PrintStream out = new PrintStream(outBytes, true, StandardCharsets.UTF_8);
 
-	private Path version(String name, byte[] jar) throws IOException
+	/** A version folder with one jar under lib/, as its manifest would name it. */
+	private List<Path> version(String name, byte[] jar) throws IOException
 	{
-		Path lib = dir.resolve(name).resolve(VersionLoader.LIB_DIR);
+		return List.of(jar(name, "odinsgate-launcher-" + name + ".jar", jar));
+	}
+
+	private Path jar(String version, String name, byte[] jar) throws IOException
+	{
+		Path lib = dir.resolve(version).resolve("lib");
 		Files.createDirectories(lib);
-		Files.write(lib.resolve("odinsgate-launcher-" + name + ".jar"), jar);
-		return dir.resolve(name);
+		Path file = lib.resolve(name);
+		Files.write(file, jar);
+		return file;
 	}
 
 	@Test
 	public void theVersionsMainRunsWithTheArgumentsAndItsCodeComesBack() throws Exception
 	{
-		Path version = version("0.2.0", FakeVersion.jar("fake 0.2.0", 42));
+		List<Path> version = version("0.2.0", FakeVersion.jar("fake 0.2.0", 42));
 		ClassLoader before = Thread.currentThread().getContextClassLoader();
 		int code = VersionLoader.run(version, new String[]{"--auto", "--manifest", "m.json"}, out);
 		assertEquals(42, code);
@@ -48,40 +55,45 @@ public class VersionLoaderTest
 	{
 		// The real Main in this JVM has a run that needs a manifest; the fake one returns 42 whatever it is given,
 		// so getting 42 proves the version's Main ran, not the shell's.
-		Path version = version("0.3.0", FakeVersion.jar("own", 42));
+		List<Path> version = version("0.3.0", FakeVersion.jar("own", 42));
 		assertEquals(42, VersionLoader.run(version, new String[]{}, out));
 	}
 
 	@Test
 	public void aVersionWithoutAMainCannotRun() throws Exception
 	{
-		Path version = version("0.4.0", FakeVersion.emptyJar());
+		List<Path> version = version("0.4.0", FakeVersion.emptyJar());
 		IOException refused = assertThrows(IOException.class,
 			() -> VersionLoader.run(version, new String[]{}, out));
 		assertTrue(refused.getMessage().contains("has no " + VersionLoader.MAIN_CLASS), refused.getMessage());
 	}
 
 	@Test
-	public void aVersionWithoutJarsCannotRun() throws Exception
+	public void aVersionWhoseMainFailsToLoadCannotRun() throws Exception
 	{
-		Path version = dir.resolve("0.5.0");
-		Files.createDirectories(version.resolve(VersionLoader.LIB_DIR));
+		List<Path> version = version("0.5.0", FakeVersion.brokenJar());
 		IOException refused = assertThrows(IOException.class,
 			() -> VersionLoader.run(version, new String[]{}, out));
-		assertTrue(refused.getMessage().contains("no jars under"), refused.getMessage());
+		assertTrue(refused.getMessage().contains("the version failed to load: java.lang.ExceptionInInitializerError"),
+			refused.getMessage());
+		assertTrue(refused.getCause() instanceof ExceptionInInitializerError);
 	}
 
 	@Test
-	public void theJarsAreListedInNameOrder() throws Exception
+	public void aVersionWithoutJarsCannotRun() throws Exception
 	{
-		Path lib = dir.resolve("0.6.0").resolve(VersionLoader.LIB_DIR);
-		Files.createDirectories(lib);
-		for (String name : List.of("zed.jar", "asm.jar", "odinsgate-launcher-0.6.0.jar", "notes.txt"))
-		{
-			Files.writeString(lib.resolve(name), "x");
-		}
-		List<String> names = VersionLoader.jars(dir.resolve("0.6.0")).stream()
-			.map(path -> path.getFileName().toString()).toList();
-		assertEquals(List.of("asm.jar", "odinsgate-launcher-0.6.0.jar", "zed.jar"), names);
+		IOException refused = assertThrows(IOException.class,
+			() -> VersionLoader.run(List.of(), new String[]{}, out));
+		assertTrue(refused.getMessage().contains("names no jars"), refused.getMessage());
+	}
+
+	@Test
+	public void onlyTheJarsNamedAreLoadedNotEverythingUnderLib() throws Exception
+	{
+		// A stray jar sorts first and holds a Main of its own; it isn't named, so it is never on the class path.
+		jar("0.6.0", "0-stray.jar", FakeVersion.jar("stray", 7));
+		Path named = jar("0.6.0", "odinsgate-launcher-0.6.0.jar", FakeVersion.jar("named", 42));
+		assertEquals(42, VersionLoader.run(List.of(named), new String[]{"x"}, out));
+		assertEquals("named: x\n", outBytes.toString(StandardCharsets.UTF_8));
 	}
 }
