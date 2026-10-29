@@ -33,6 +33,19 @@ jobs:
           java-version: "21"
       - uses: gradle/actions/setup-gradle@v4
       - run: ./gradlew -p launcher build
+      # The installed layout (bin/ and lib/), what the test VM runs from C:\RSPS\launcher\app.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: odinsgate-launcher
+          path: launcher/build/install/odinsgate-launcher/
+          if-no-files-found: error
+
+  # The VM's launch scripts: the parts that need no VM, run with PowerShell 7 on Linux.
+  launch-scripts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: pwsh -NoProfile -File test-runner/launch/start-client-functions.tests.ps1
 
   tick-recorder:
     runs-on: ubuntu-latest
