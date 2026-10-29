@@ -70,6 +70,24 @@ public class RotatingLogTest
 	}
 
 	@Test
+	public void olderLogsThatCannotShiftPutTheLiveLogBack() throws Exception
+	{
+		Path log = dir.resolve("game.log");
+		Files.writeString(RotatingLog.aside(log, 1), "run 2");
+		Files.writeString(RotatingLog.aside(log, 2), "run 1");
+		Files.writeString(log, "run 3 " + "x".repeat(100));
+		// The oldest name taken by a folder with something in it: dropping it fails, after the live log has moved.
+		Path blocked = RotatingLog.aside(log, 3);
+		Files.createDirectories(blocked);
+		Files.writeString(blocked.resolve("in-the-way"), "");
+		assertThrows(java.io.IOException.class, () -> RotatingLog.rotate(log, 100, 3));
+		assertTrue(Files.readString(log).startsWith("run 3"), "the live log is back where it was");
+		assertFalse(Files.exists(log.resolveSibling("game.log.moving")), "nothing is left under the moving name");
+		assertEquals("run 2", Files.readString(RotatingLog.aside(log, 1)));
+		assertEquals("run 1", Files.readString(RotatingLog.aside(log, 2)));
+	}
+
+	@Test
 	public void aFileThatStopsTakingWritesLosesTheConsoleNothing() throws Exception
 	{
 		ByteArrayOutputStream fileBytes = new ByteArrayOutputStream();

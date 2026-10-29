@@ -30,7 +30,8 @@ final class RotatingLog
 	 * Moves {@code file} aside when it has reached {@code maxBytes}, keeping {@code keep} older ones. The live file
 	 * moves first, to a {@code .moving} name: it is the one move that can fail (a game that still holds it open on
 	 * Windows), and when it does nothing else has been touched, so the older files are not shifted or dropped by a
-	 * launcher that tries again and again.
+	 * launcher that tries again and again. Should the older files fail to shift after that, the live file is put
+	 * back where it was, so nothing is ever left under the {@code .moving} name.
 	 */
 	static void rotate(Path file, long maxBytes, int keep) throws IOException
 	{
@@ -40,16 +41,31 @@ final class RotatingLog
 		}
 		Path moving = file.resolveSibling(file.getFileName() + ".moving");
 		Files.move(file, moving, StandardCopyOption.REPLACE_EXISTING);
-		Files.deleteIfExists(aside(file, keep));
-		for (int i = keep - 1; i >= 1; i--)
+		try
 		{
-			Path older = aside(file, i);
-			if (Files.exists(older))
+			Files.deleteIfExists(aside(file, keep));
+			for (int i = keep - 1; i >= 1; i--)
 			{
-				Files.move(older, aside(file, i + 1), StandardCopyOption.REPLACE_EXISTING);
+				Path older = aside(file, i);
+				if (Files.exists(older))
+				{
+					Files.move(older, aside(file, i + 1), StandardCopyOption.REPLACE_EXISTING);
+				}
 			}
+			Files.move(moving, aside(file, 1), StandardCopyOption.REPLACE_EXISTING);
 		}
-		Files.move(moving, aside(file, 1), StandardCopyOption.REPLACE_EXISTING);
+		catch (IOException e)
+		{
+			try
+			{
+				Files.move(moving, file, StandardCopyOption.REPLACE_EXISTING);
+			}
+			catch (IOException putBack)
+			{
+				e.addSuppressed(putBack);
+			}
+			throw e;
+		}
 	}
 
 	/** Opens {@code file} for appending, rotated first, with every line also written to {@code alsoTo}. */
