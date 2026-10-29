@@ -35,6 +35,29 @@ The core that later PRs build on; no window, downloads or releases yet:
   `--developer-mode`, which is what lets the sideloaded test-runner plugin load.
 - `Names` and `NamesTest`: every friend-visible name in one place, held to the rule that none may contain RuneScape,
   OSRS, Jagex, -scape or RSPS in any case, and the module's file names with them.
+- `Bootstrap`, `RuneLiteSignature` and `RuneLiteCache`: the pinned RuneLite download. The manifest's pin names a
+  static.runelite.net commit and its bootstrap's SHA-256; the cache fetches that bootstrap, requires both the pinned
+  hash and RuneLite's own SHA256withRSA signature (checked against the committed `runelite.crt`, BSD-2 from
+  runelite/launcher - the key alone, no validity window, like RuneLite's own launcher, so the pin outlives the
+  certificate's April 2027 notAfter), and only then parses it. Jars download from RuneLite's own servers into our
+  data folder, one subfolder per pinned commit - never the friend's real RuneLite cache - and every jar is hashed
+  against the verified bootstrap before every launch, so a healthy cache starts the game with no network at all and
+  a tampered file is refetched or, fresh off the network, stops the launch. `prune` keeps only the pins the manifest
+  still names. The tests run the production verify path against committed copies of RuneLite's real revision-241
+  release files (`bootstrap-241.json` and its signature), so the chain is proven end to end without the network.
+- `Preflight`, `ClassPatch` and `PatchingClassLoader`: the in-memory patching that points the pinned RuneLite at our
+  server, RSProx's recipe redone with ASM on classes as they load, so no jar is ever rewritten on disk and a class
+  RuneLite never loads is never touched. `Preflight` reads the jars once before launch and finds the four patch
+  points by their bytecode, not by name: the server's RSA key (in the one injected-client class that also holds the
+  exponent, and ours may not have more digits than the client's), `"127.0.0.1"` where `String.endsWith` takes it
+  (the jav_config host check, made `""`), `ClientLoader.updateVanilla` when the jar has it (made to return at once,
+  so a forged config can never download a gamepack), and `".jagex.com"` in `downloadConfig` (made `""`). It also
+  checks, without patching, that `RuneLiteModule` reads `-Drunelite.http-service.url` and `RuntimeConfigLoader`
+  reads `-Drunelite.rtconf`. A missing point stops the launch with every gap named; each patch carries the exact
+  count the scan found and refuses a class that no longer matches it, so a RuneLite that changed under our pin never
+  runs half-patched. The report names jars, classes, methods and counts, never a key. The tests build their own fake
+  client with ASM (`FakeClient`), so no RuneLite or Jagex jar is ever in git, and see each patch through its effect
+  after loading through the real loader.
 
 The spike that proved the patching route on the real jars was PR #113, closed unmerged as planned: nothing of
 RuneLite's or Jagex's enters this repo, in git or in a release.

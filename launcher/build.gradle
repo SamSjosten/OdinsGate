@@ -11,6 +11,10 @@ repositories {
 
 dependencies {
 	implementation 'com.google.code.gson:gson:2.13.1'
+	// The loader patches RuneLite's classes as they load; ASM reads and rewrites them. The tests build their own
+	// fake classes with it too, so no RuneLite or Jagex jar is ever in git.
+	implementation 'org.ow2.asm:asm:9.11'
+	implementation 'org.ow2.asm:asm-tree:9.11'
 
 	testImplementation platform('org.junit:junit-bom:5.12.2')
 	testImplementation 'org.junit.jupiter:junit-jupiter'
