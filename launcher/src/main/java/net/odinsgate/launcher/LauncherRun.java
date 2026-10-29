@@ -340,9 +340,11 @@ public final class LauncherRun
 			{
 				if (result instanceof ServerCheck.Result.UnknownRevision unknown)
 				{
-					// The revision is known even though it stops the launch: the status file says which one.
+					// The revision is known even though it stops the launch: the status file says which one. No pin
+					// goes with it, so an earlier run's pin is dropped rather than shown next to the new revision.
 					report.revision = unknown.revision();
 					revision = unknown.revision();
+					pin = null;
 				}
 				report.fail(reason(result));
 				return result;

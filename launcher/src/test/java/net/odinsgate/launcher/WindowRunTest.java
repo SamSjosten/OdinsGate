@@ -454,6 +454,12 @@ public class WindowRunTest
 		assertEquals("The server was updated.", last().status());
 		assertTrue(last().detail().contains("242"), last().detail());
 		assertTrue(worker.noneLive());
+
+		run.copyReport(() -> {});
+		worker.drain();
+		String report = clipboard.get(0);
+		assertTrue(report.contains("revision 242\n"), report);
+		assertFalse(report.contains("pin RuneLite"), "the old revision's pin isn't shown next to the new revision");
 	}
 
 	@Test

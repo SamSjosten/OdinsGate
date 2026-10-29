@@ -71,6 +71,17 @@ public class ProblemReportTest
 	}
 
 	@Test
+	public void aLogThatIsNotCleanUtf8StillShowsItsLines() throws Exception
+	{
+		Path log = dir.resolve("game.log");
+		Files.write(log, "fine\n\u00ff\u00fe not utf-8 \n".getBytes(java.nio.charset.StandardCharsets.ISO_8859_1));
+		List<String> tail = ProblemReport.tail(log, 10);
+		assertEquals(2, tail.size());
+		assertEquals("fine", tail.get(0));
+		assertTrue(tail.get(1).contains("not utf-8"), tail.get(1));
+	}
+
+	@Test
 	public void aLineThatMayHoldAPasswordIsLeftOut() throws Exception
 	{
 		for (String line : List.of("password=hunter2", "-Dpassword hunter2", "\"Password\": \"hunter2\"",
@@ -81,6 +92,9 @@ public class ProblemReportTest
 		assertEquals("logged in as test", ProblemReport.scrub("logged in as test", ""));
 		assertEquals("its log in <data>/logs/game.log", ProblemReport.scrub("its log in /home/sam/data/logs/game.log",
 			"/home/sam/data"));
+		assertEquals("<data>/logs/game.log: Permission denied",
+			ProblemReport.scrub("/home/sam/data/logs/game.log: Permission denied", "/home/sam/data"),
+			"a read failure's message carries the path and is scrubbed like a line");
 
 		Path gameLog = dir.resolve("game.log");
 		Files.writeString(gameLog, "fine\npassword=hunter2\nalso fine\n");

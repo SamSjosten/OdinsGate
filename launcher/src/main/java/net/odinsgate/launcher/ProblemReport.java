@@ -87,7 +87,9 @@ final class ProblemReport
 		}
 		catch (IOException e)
 		{
-			report.append("(could not be read: ").append(e.getMessage()).append(")\n");
+			// The message often carries the file's whole path, so it goes through the same scrub as a line.
+			String why = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
+			report.append("(could not be read: ").append(scrub(why, folder)).append(")\n");
 			return;
 		}
 		if (lines == null)
@@ -105,14 +107,18 @@ final class ProblemReport
 		}
 	}
 
-	/** The last {@code count} lines of {@code file}, or null when there is no such file. */
+	/**
+	 * The last {@code count} lines of {@code file}, or null when there is no such file. The bytes are read as
+	 * UTF-8 with anything else shown as the replacement character, since a game's console output isn't always
+	 * clean UTF-8 and a report must still show the rest.
+	 */
 	static List<String> tail(Path file, int count) throws IOException
 	{
 		if (!Files.isRegularFile(file))
 		{
 			return null;
 		}
-		List<String> all = Files.readAllLines(file, StandardCharsets.UTF_8);
+		List<String> all = new String(Files.readAllBytes(file), StandardCharsets.UTF_8).lines().toList();
 		return new ArrayList<>(all.subList(Math.max(0, all.size() - count), all.size()));
 	}
 
