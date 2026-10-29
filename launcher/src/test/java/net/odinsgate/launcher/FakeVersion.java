@@ -46,6 +46,26 @@ final class FakeVersion
 		return jarOf("net/odinsgate/launcher/Main.class", writer.toByteArray());
 	}
 
+	/** A jar whose Main throws from its static initialiser: a version that can't even load. */
+	static byte[] brokenJar() throws IOException
+	{
+		ClassWriter writer = new ClassWriter(ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS);
+		writer.visit(Opcodes.V17, Opcodes.ACC_PUBLIC | Opcodes.ACC_FINAL, "net/odinsgate/launcher/Main", null,
+			"java/lang/Object", null);
+		MethodVisitor init = writer.visitMethod(Opcodes.ACC_STATIC, "<clinit>", "()V", null, null);
+		init.visitCode();
+		init.visitTypeInsn(Opcodes.NEW, "java/lang/IllegalStateException");
+		init.visitInsn(Opcodes.DUP);
+		init.visitLdcInsn("broken on purpose");
+		init.visitMethodInsn(Opcodes.INVOKESPECIAL, "java/lang/IllegalStateException", "<init>",
+			"(Ljava/lang/String;)V", false);
+		init.visitInsn(Opcodes.ATHROW);
+		init.visitMaxs(0, 0);
+		init.visitEnd();
+		writer.visitEnd();
+		return jarOf("net/odinsgate/launcher/Main.class", writer.toByteArray());
+	}
+
 	/** A jar with no Main at all, for a version that can't run. */
 	static byte[] emptyJar() throws IOException
 	{

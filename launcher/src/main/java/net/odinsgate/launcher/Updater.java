@@ -1,7 +1,6 @@
 package net.odinsgate.launcher;
 
 import java.io.IOException;
-import java.io.InputStream;
 import java.io.PrintStream;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -15,11 +14,18 @@ import java.nio.file.StandardCopyOption;
 import java.security.PublicKey;
 import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.TreeMap;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.regex.Pattern;
 
 /**
@@ -41,8 +47,9 @@ import java.util.regex.Pattern;
  *
  * <p>A started version writes a healthy marker once its window is up (or its first check done); a version that was
  * started and never became healthy (a crash), or that hasn't within the watchdog's minute (a hang), is listed as
- * bad: never run again and never downloaded again, until a newer version appears. Nothing here depends on the
- * network being there: with nothing reachable the last good version starts.
+ * bad: never run again and never downloaded again, until a newer version appears. The started marker names the
+ * process, so a second launcher opened while the first is still coming up sees a start under way, not a crash.
+ * Nothing here depends on the network being there: with nothing reachable the last good version starts.
  */
 public final class Updater
 {
@@ -52,6 +59,8 @@ public final class Updater
 	static final URI DOWNLOAD_PAGE = URI.create(RELEASES + "/latest");
 	static final String MANIFEST_NAME = "manifest.json";
 	static final String SIGNATURE_SUFFIX = ".sig";
+	/** A manifest and signature on their way into place, written whole before either moves. */
+	static final String NEW_SUFFIX = ".new";
 	static final String VERSIONS_DIR = "versions";
 	static final String DOWNLOADING_SUFFIX = ".downloading";
 	static final String POINTER = "current";
@@ -92,9 +101,12 @@ public final class Updater
 
 	/**
 	 * Run {@code version}: the installed shell itself when {@code versionDir} is null, else that downloaded version
-	 * through {@link VersionLoader}, with {@code manifest} (kept at {@code manifestFile}) as the signed truth.
+	 * through {@link VersionLoader} from {@code jars}, the jars its own signed manifest names (and so the ones hashed
+	 * before this; a jar dropped into its folder is never loaded), with {@code manifest} (kept at
+	 * {@code manifestFile}) as the signed truth.
 	 */
-	public record Run(String version, Path versionDir, Manifest manifest, Path manifestFile) implements Outcome
+	public record Run(String version, Path versionDir, List<Path> jars, Manifest manifest, Path manifestFile)
+		implements Outcome
 	{
 		public boolean installed()
 		{
@@ -158,48 +170,73 @@ public final class Updater
 	{
 		HttpClient http = HttpClient.newBuilder().connectTimeout(TIMEOUT).followRedirects(HttpClient.Redirect.NORMAL)
 			.build();
-		Fetcher fetcher = uri ->
+		return new Updater(dataDir, shellVersion, appDir, TrustedKeys.trusted(), RELEASES,
+			fetcher(http, TIMEOUT, MAX_FILE_BYTES),
+			(from, to) -> Files.move(from, to, StandardCopyOption.ATOMIC_MOVE), Thread::sleep,
+			Clock.systemUTC(), log);
+	}
+
+	/**
+	 * One GET over {@code http}, the whole answer within {@code timeout} (the client's own request timeout covers
+	 * the headers only; a body that stalls after them would otherwise hold the launcher before its window opens),
+	 * and at most {@code maxBytes} of it: a body whose Content-Length is already past that is dropped unread, one
+	 * without a length is read and measured.
+	 */
+	static Fetcher fetcher(HttpClient http, Duration timeout, long maxBytes)
+	{
+		return uri ->
 		{
-			HttpRequest request = HttpRequest.newBuilder(uri).timeout(TIMEOUT).GET().build();
+			HttpRequest request = HttpRequest.newBuilder(uri).timeout(timeout).GET().build();
+			HttpResponse.BodyHandler<byte[]> bounded = info ->
+				info.headers().firstValueAsLong("content-length").orElse(0) > maxBytes
+					? HttpResponse.BodySubscribers.replacing(null)
+					: HttpResponse.BodySubscribers.ofByteArray();
+			CompletableFuture<HttpResponse<byte[]>> sent = http.sendAsync(request, bounded);
+			HttpResponse<byte[]> response;
 			try
 			{
-				HttpResponse<InputStream> response = http.send(request, HttpResponse.BodyHandlers.ofInputStream());
-				try (InputStream body = response.body())
-				{
-					if (response.statusCode() != 200)
-					{
-						throw new IOException(uri + " answered " + response.statusCode());
-					}
-					byte[] bytes = body.readNBytes((int) MAX_FILE_BYTES + 1);
-					if (bytes.length > MAX_FILE_BYTES)
-					{
-						throw new IOException(uri + " is more than " + MAX_FILE_BYTES + " bytes, more than a release "
-							+ "file");
-					}
-					return bytes;
-				}
+				response = sent.get(timeout.toMillis(), TimeUnit.MILLISECONDS);
+			}
+			catch (TimeoutException e)
+			{
+				sent.cancel(true);
+				throw new IOException(uri + " didn't answer whole within " + timeout.toMillis() + " ms");
+			}
+			catch (ExecutionException e)
+			{
+				Throwable cause = e.getCause() == null ? e : e.getCause();
+				throw new IOException(uri + ": " + cause.getMessage(), cause);
 			}
 			catch (InterruptedException e)
 			{
 				Thread.currentThread().interrupt();
+				sent.cancel(true);
 				throw new IOException("interrupted while fetching " + uri, e);
 			}
+			if (response.statusCode() != 200)
+			{
+				throw new IOException(uri + " answered " + response.statusCode());
+			}
+			if (response.body() == null || response.body().length > maxBytes)
+			{
+				throw new IOException(uri + " is more than " + maxBytes + " bytes, more than a release file");
+			}
+			return response.body();
 		};
-		return new Updater(dataDir, shellVersion, appDir, TrustedKeys.trusted(), RELEASES, fetcher,
-			(from, to) -> Files.move(from, to, StandardCopyOption.ATOMIC_MOVE), Thread::sleep,
-			Clock.systemUTC(), log);
 	}
 
 	/** The whole decision: see the class comment. Never throws; what went wrong is in the log. */
 	public Outcome update()
 	{
 		listCrashedVersions();
+		repairKept(dataDir);
 		List<PublicKey> trusted = trustedKeys();
 		if (trusted.isEmpty())
 		{
 			log.println("[updater] no release keys are built into this launcher: updates are off");
 		}
-		Loaded stored = load(dataDir.resolve(MANIFEST_NAME), "the accepted manifest", trusted);
+		Loaded onDisk = load(dataDir.resolve(MANIFEST_NAME), "the accepted manifest", trusted);
+		Loaded stored = onDisk != null ? onDisk : keptByNewestVersion(trusted);
 		Loaded remote = null;
 		byte[] bytes = null;
 		String signature = null;
@@ -255,7 +292,7 @@ public final class Updater
 		{
 			rotatePrimaryKeyIfNamed(remote, trusted);
 		}
-		if (remote != null && (stored == null || !Arrays.equals(stored.bytes(), remote.bytes())))
+		if (remote != null && (onDisk == null || !Arrays.equals(onDisk.bytes(), remote.bytes())))
 		{
 			try
 			{
@@ -292,10 +329,11 @@ public final class Updater
 				+ manifest.minBootstrapVersion + " or newer");
 		}
 		String target = manifest.version;
-		if (!target.equals(shellVersion) && Versions.isNewer(target, shellVersion) && !isBad(target)
-			&& verifiedVersion(target, trusted).isEmpty())
+		if (Versions.isNewer(target, shellVersion) && !isBad(target))
 		{
-			if (download(target, accepted))
+			// In place already (a pointer write that failed last time is tried again), or downloaded now.
+			boolean inPlace = verifiedVersion(target, trusted).isPresent() || download(target, accepted);
+			if (inPlace && !target.equals(readPointer()))
 			{
 				try
 				{
@@ -314,28 +352,43 @@ public final class Updater
 	/** The run: the pointer's version when it verifies, else the newest that does, else the installed shell. */
 	private Outcome choose(Loaded accepted, List<PublicKey> trusted)
 	{
-		List<String> candidates = verifiedVersions(trusted);
+		Map<String, Manifest> verified = verifiedVersions(trusted);
 		String pointer = readPointer();
 		String chosen = null;
-		if (pointer != null && candidates.contains(pointer))
+		if (pointer != null && verified.containsKey(pointer))
 		{
 			chosen = pointer;
 		}
-		else if (!candidates.isEmpty())
+		else if (!verified.isEmpty())
 		{
+			chosen = verified.keySet().iterator().next();
 			log.println("[updater] the current pointer " + (pointer == null ? "is missing or unreadable" : "names "
-				+ pointer + ", which doesn't verify") + ": falling back to " + candidates.get(0));
-			chosen = candidates.get(0);
+				+ pointer + ", which doesn't verify") + ": falling back to " + chosen);
 		}
 		if (chosen == null || Versions.compare(shellVersion, chosen) >= 0)
 		{
 			log.println("[updater] running the installed launcher " + shellVersion
 				+ (chosen == null ? "" : " (newer than " + chosen + ")") + " with manifest "
 				+ accepted.manifest().version);
-			return new Run(shellVersion, null, accepted.manifest(), accepted.file());
+			return new Run(shellVersion, null, List.of(), accepted.manifest(), accepted.file());
 		}
 		log.println("[updater] running version " + chosen + " with manifest " + accepted.manifest().version);
-		return new Run(chosen, versionDir(chosen), accepted.manifest(), accepted.file());
+		return new Run(chosen, versionDir(chosen), jarsOf(chosen, verified.get(chosen)), accepted.manifest(),
+			accepted.file());
+	}
+
+	/** The jars {@code version}'s own signed manifest {@code kept} names, under its folder: the class path. */
+	private List<Path> jarsOf(String version, Manifest kept)
+	{
+		List<Path> jars = new ArrayList<>();
+		for (Manifest.FileEntry entry : kept.files)
+		{
+			if (entry.path().endsWith(".jar"))
+			{
+				jars.add(versionDir(version).resolve(entry.path()));
+			}
+		}
+		return jars;
 	}
 
 	/** The keys a manifest may be signed with now: a primary the backup key named since, else the built-in ones. */
@@ -414,13 +467,69 @@ public final class Updater
 		}
 	}
 
+	/**
+	 * Keeps the manifest and its signature under {@code dir} so that a stop at any point (a crash, a disk that
+	 * fails) leaves the old pair whole, the new pair whole, or a state {@link #repairKept} finishes: both are written
+	 * whole under {@code .new} names first, then the signature moves into place, then the manifest.
+	 */
 	private static void keep(Loaded loaded, Path dir) throws IOException
 	{
 		Files.createDirectories(dir);
-		Path temp = dir.resolve(MANIFEST_NAME + ".tmp");
-		Files.write(temp, loaded.bytes());
-		Files.move(temp, dir.resolve(MANIFEST_NAME), StandardCopyOption.REPLACE_EXISTING);
-		Atomically.write(dir.resolve(MANIFEST_NAME + SIGNATURE_SUFFIX), loaded.signature());
+		Path newManifest = dir.resolve(MANIFEST_NAME + NEW_SUFFIX);
+		Path newSignature = dir.resolve(MANIFEST_NAME + NEW_SUFFIX + SIGNATURE_SUFFIX);
+		Files.write(newManifest, loaded.bytes());
+		Atomically.write(newSignature, loaded.signature());
+		Files.move(newSignature, dir.resolve(MANIFEST_NAME + SIGNATURE_SUFFIX), StandardCopyOption.REPLACE_EXISTING);
+		Files.move(newManifest, dir.resolve(MANIFEST_NAME), StandardCopyOption.REPLACE_EXISTING);
+	}
+
+	/**
+	 * Finishes or undoes a {@link #keep} that stopped half way. Both {@code .new} files there: nothing had moved, so
+	 * the old pair stands and they go (the release is fetched again). The {@code .new} manifest alone: the signature
+	 * had moved and the manifest hadn't, so it is moved now and the pair is whole again.
+	 */
+	private void repairKept(Path dir)
+	{
+		Path newManifest = dir.resolve(MANIFEST_NAME + NEW_SUFFIX);
+		Path newSignature = dir.resolve(MANIFEST_NAME + NEW_SUFFIX + SIGNATURE_SUFFIX);
+		try
+		{
+			if (Files.exists(newSignature))
+			{
+				Files.deleteIfExists(newSignature);
+				Files.deleteIfExists(newManifest);
+			}
+			else if (Files.exists(newManifest))
+			{
+				Files.move(newManifest, dir.resolve(MANIFEST_NAME), StandardCopyOption.REPLACE_EXISTING);
+				log.println("[updater] finished keeping the accepted manifest, which a stop had left half moved");
+			}
+		}
+		catch (IOException e)
+		{
+			log.println("[updater] what a stop left of the accepted manifest could not be cleared: " + e.getMessage());
+		}
+	}
+
+	/**
+	 * When the accepted pair is no use (torn by a stop that {@link #repairKept} couldn't finish, or a file that
+	 * changed under us): the manifest kept beside the newest downloaded version that verifies, a signed one that was
+	 * accepted once, so a start with no internet still has the versions it downloaded. The accepted pair is written
+	 * again from the next release manifest fetched.
+	 */
+	private Loaded keptByNewestVersion(List<PublicKey> trusted)
+	{
+		for (String version : verifiedVersions(trusted).keySet())
+		{
+			Loaded kept = load(versionDir(version).resolve(MANIFEST_NAME), "version " + version + "'s manifest",
+				trusted);
+			if (kept != null)
+			{
+				log.println("[updater] the manifest kept with version " + version + " stands in for the accepted one");
+				return kept;
+			}
+		}
+		return null;
 	}
 
 	/**
@@ -512,10 +621,10 @@ public final class Updater
 		throw last;
 	}
 
-	/** The downloaded versions that verify and aren't bad, newest first. */
-	private List<String> verifiedVersions(List<PublicKey> trusted)
+	/** The downloaded versions that verify and aren't bad, newest first, each with the manifest kept beside it. */
+	private Map<String, Manifest> verifiedVersions(List<PublicKey> trusted)
 	{
-		List<String> versions = new ArrayList<>();
+		Map<String, Manifest> versions = new TreeMap<>((a, b) -> Versions.compare(b, a));
 		Path root = dataDir.resolve(VERSIONS_DIR);
 		if (!Files.isDirectory(root))
 		{
@@ -526,9 +635,9 @@ public final class Updater
 			for (Path dir : dirs)
 			{
 				String name = dir.getFileName().toString();
-				if (VERSION.matcher(name).matches() && !isBad(name) && verifiedVersion(name, trusted).isPresent())
+				if (VERSION.matcher(name).matches() && !isBad(name))
 				{
-					versions.add(name);
+					verifiedVersion(name, trusted).ifPresent(kept -> versions.put(name, kept));
 				}
 			}
 		}
@@ -536,7 +645,6 @@ public final class Updater
 		{
 			log.println("[updater] " + root + " could not be listed: " + e.getMessage());
 		}
-		versions.sort((a, b) -> Versions.compare(b, a));
 		return versions;
 	}
 
@@ -649,7 +757,37 @@ public final class Updater
 	{
 		Path dir = versionDir(version);
 		Files.deleteIfExists(dir.resolve(HEALTHY_MARKER));
-		Files.writeString(dir.resolve(STARTED_MARKER), clock.instant() + "\n", StandardCharsets.UTF_8);
+		ProcessHandle me = ProcessHandle.current();
+		long since = me.info().startInstant().map(Instant::toEpochMilli).orElse(0L);
+		Files.writeString(dir.resolve(STARTED_MARKER), me.pid() + " " + since + " " + clock.instant() + "\n",
+			StandardCharsets.UTF_8);
+	}
+
+	/**
+	 * Whether the process a started marker names is still running (its pid, and its start time where the system
+	 * tells it, so a pid given to some new process since doesn't count): a second launcher opened while the first
+	 * was still coming up, which is no crash.
+	 */
+	private static boolean stillStarting(Path marker)
+	{
+		try
+		{
+			String[] parts = Files.readString(marker, StandardCharsets.UTF_8).trim().split(" ");
+			long pid = Long.parseLong(parts[0]);
+			long since = parts.length > 1 ? Long.parseLong(parts[1]) : 0;
+			Optional<ProcessHandle> process = ProcessHandle.of(pid);
+			if (process.isEmpty() || !process.get().isAlive())
+			{
+				return false;
+			}
+			Optional<Instant> started = process.get().info().startInstant();
+			return since == 0 || started.isEmpty() || started.get().toEpochMilli() == since;
+		}
+		catch (IOException | RuntimeException e)
+		{
+			// A marker that doesn't read names no running process.
+			return false;
+		}
 	}
 
 	/** The file the running version touches once it is up; {@code --healthy} on its command line. */
@@ -686,7 +824,7 @@ public final class Updater
 			{
 				String name = dir.getFileName().toString();
 				if (VERSION.matcher(name).matches() && Files.exists(dir.resolve(STARTED_MARKER))
-					&& !Files.exists(dir.resolve(HEALTHY_MARKER)))
+					&& !Files.exists(dir.resolve(HEALTHY_MARKER)) && !stillStarting(dir.resolve(STARTED_MARKER)))
 				{
 					markBad(name, "its last start never became healthy");
 				}

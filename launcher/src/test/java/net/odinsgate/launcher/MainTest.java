@@ -9,6 +9,7 @@ import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -98,27 +99,26 @@ public class MainTest
 	}
 
 	@Test
-	public void aVersionThatCannotRunIsBadAndTheShellSaysSo() throws Exception
+	public void aVersionThatCannotRunIsBadAndTheInstalledLauncherLaunchesInstead() throws Exception
 	{
 		java.security.KeyPair key = key();
 		Path home = dir.resolve("home");
-		// The fake version has no Main: the hand-off fails, the version is listed as bad, and the installed launcher
-		// would run instead; here that stops at the manifest's server, which this test machine can't reach, so
-		// only the lines up to the fallback are checked.
-		Main.Updaters updaters = fakeGitHub(key, "0.2.0", "0.1.0", FakeVersion.emptyJar());
-		Thread run = new Thread(() -> Main.run(new String[]{"--auto", "--home", home.toString()}, out, updaters));
-		run.setDaemon(true);
-		run.start();
-		long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(10);
-		while (!output().contains("running the installed launcher " + Main.VERSION + " instead")
-			&& System.nanoTime() < deadline)
-		{
-			Thread.sleep(50);
-		}
+		List<String> launched = new ArrayList<>();
+		// The fake version has no Main: the hand-off fails, the version is listed as bad, and the installed
+		// launcher's own launch runs with the accepted manifest (a recording one here, in place of a server check).
+		int code = Main.run(new String[]{"--auto", "--home", home.toString()}, out,
+			fakeGitHub(key, "0.2.0", "0.1.0", FakeVersion.emptyJar()), (options, manifest, dataDir, log) ->
+			{
+				launched.add(manifest.version + " in " + dataDir);
+				return 77;
+			});
+		assertEquals(77, code, output());
+		assertEquals(List.of("0.2.0 in " + home), launched);
 		assertTrue(output().contains("[launcher] version 0.2.0 could not run: the version has no "
 			+ VersionLoader.MAIN_CLASS), output());
 		assertTrue(output().contains("[updater] version 0.2.0 is bad (it could not run:"), output());
-		assertTrue(Files.readString(home.resolve("bad-versions.txt")).trim().equals("0.2.0"));
+		assertTrue(output().contains("running the installed launcher " + Main.VERSION + " instead"), output());
+		assertEquals("0.2.0", Files.readString(home.resolve("bad-versions.txt")).trim());
 	}
 
 	@Test

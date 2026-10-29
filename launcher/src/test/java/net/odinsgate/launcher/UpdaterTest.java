@@ -1,5 +1,6 @@
 package net.odinsgate.launcher;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
@@ -185,6 +186,15 @@ public class UpdaterTest
 		return fetched.stream().filter(uri -> uri.endsWith(suffix)).count();
 	}
 
+	/** The started marker a launcher that crashed left: a process that is long gone, and no healthy marker. */
+	private void crashed(String version) throws IOException
+	{
+		Path dir = data.resolve("versions").resolve(version);
+		Files.createDirectories(dir);
+		Files.writeString(dir.resolve(".started"), Long.MAX_VALUE + " 1 " + AT + "\n");
+		Files.deleteIfExists(dir.resolve(".healthy"));
+	}
+
 	@Test
 	public void aNewerReleaseIsDownloadedCheckedKeptAndMadeCurrent() throws Exception
 	{
@@ -196,6 +206,8 @@ public class UpdaterTest
 		assertEquals("0.2.0", run.manifest().version);
 		assertEquals(data.resolve("manifest.json"), run.manifestFile());
 		assertTrue(Files.exists(run.versionDir().resolve("lib").resolve("odinsgate-launcher-0.2.0.jar")));
+		assertEquals(List.of(run.versionDir().resolve("lib").resolve("odinsgate-launcher-0.2.0.jar")), run.jars(),
+			"the class path is the jars the manifest names");
 		assertTrue(Files.exists(run.versionDir().resolve("manifest.json")), "the manifest is kept beside the files");
 		assertTrue(Files.exists(run.versionDir().resolve("manifest.json.sig")));
 		assertEquals("0.2.0", Files.readString(data.resolve("current")).trim(), "the pointer switched");
@@ -269,9 +281,8 @@ public class UpdaterTest
 	{
 		installTwo();
 		Updater updater = updater("0.1.0");
-		updater.markStarted("0.3.0");
-		assertTrue(Files.exists(updater.versionDir("0.3.0").resolve(".started")));
-		// No healthy marker ever came: the next start finds the crash.
+		// A launcher started 0.3.0, and no healthy marker ever came: the next start finds the crash.
+		crashed("0.3.0");
 		Updater.Run run = run(updater("0.1.0").update());
 		assertEquals("0.2.0", run.version());
 		assertEquals(List.of("0.3.0"), updater.badVersions());
@@ -293,6 +304,51 @@ public class UpdaterTest
 		// And the next start clears the old healthy marker before the new started one.
 		updater.markStarted("0.3.0");
 		assertFalse(updater.isHealthy("0.3.0"));
+	}
+
+	@Test
+	public void aSecondLauncherStartingWhileTheFirstComesUpIsNoCrash() throws Exception
+	{
+		installTwo();
+		Updater first = updater("0.1.0");
+		// The first launcher (this process) has written the started marker and isn't healthy yet when a second
+		// launcher starts and looks: the start is under way, not crashed.
+		first.markStarted("0.3.0");
+		assertEquals("0.3.0", run(updater("0.1.0").update()).version());
+		assertEquals(List.of(), first.badVersions());
+		assertFalse(logText().contains("is bad"), logText());
+	}
+
+	@Test
+	public void theCurrentPointerIsWrittenAgainOnceAnEarlierWriteFailed() throws Exception
+	{
+		release(PRIMARY, "0.2.0", Map.of("a.jar", JAR_A));
+		// A folder (not empty, so no rename replaces it) where the pointer file goes: the write fails.
+		Files.createDirectories(data.resolve("current"));
+		Files.writeString(data.resolve("current").resolve("in-the-way"), "x");
+		Updater.Run run = run(updater("0.1.0").update());
+		assertTrue(logText().contains("the current pointer could not be written"), logText());
+		assertEquals("0.2.0", run.version(), "the downloaded version is in place and runs by the fallback");
+		assertTrue(logText().contains("is missing or unreadable: falling back to 0.2.0"), logText());
+		// The way is clear at the next start: the pointer is written, nothing is downloaded again.
+		RuneLiteCache.deleteTree(data.resolve("current"));
+		fetched.clear();
+		run = run(updater("0.1.0").update());
+		assertEquals("0.2.0", run.version());
+		assertEquals("0.2.0", Files.readString(data.resolve("current")).trim());
+		assertEquals(0, fetchesOf("a.jar"));
+		assertTrue(logText().contains("version 0.2.0 is in place and current"), logText());
+	}
+
+	@Test
+	public void aJarDroppedIntoAVersionsFolderIsNeverOnItsClassPath() throws Exception
+	{
+		release(PRIMARY, "0.2.0", Map.of("a.jar", JAR_A));
+		Updater.Run run = run(updater("0.1.0").update());
+		Files.write(run.versionDir().resolve("lib").resolve("0-extra.jar"), JAR_B);
+		run = run(updater("0.1.0").update());
+		assertEquals("0.2.0", run.version(), "the version still verifies: every file the manifest names is right");
+		assertEquals(List.of(run.versionDir().resolve("lib").resolve("a.jar")), run.jars());
 	}
 
 	@Test
@@ -344,15 +400,30 @@ public class UpdaterTest
 	}
 
 	@Test
-	public void aCorruptPointerFallsBackToTheNewestVersionThatVerifies() throws Exception
+	public void aCorruptPointerIsWrittenAgainForTheVersionTheManifestNames() throws Exception
 	{
 		installTwo();
 		Files.writeString(data.resolve("current"), "not a version\n");
 		assertEquals("0.3.0", run(updater("0.1.0").update()).version());
-		assertTrue(logText().contains("the current pointer is missing or unreadable: falling back to 0.3.0"),
-			logText());
+		assertEquals("0.3.0", Files.readString(data.resolve("current")).trim(), "pointed at the accepted version");
 		Files.delete(data.resolve("current"));
 		assertEquals("0.3.0", run(updater("0.1.0").update()).version());
+		assertEquals("0.3.0", Files.readString(data.resolve("current")).trim());
+	}
+
+	@Test
+	public void aCorruptPointerFallsBackToTheNewestVersionThatVerifies() throws Exception
+	{
+		// The accepted manifest names 0.4.0, which can't be fetched (no internet now), so nothing re-points; the
+		// pointer is garbage, and the newest downloaded version that verifies is the one to run.
+		installTwo();
+		release(PRIMARY, "0.4.0", Map.of("c.jar", JAR_A));
+		run(updater("0.4.0").update());
+		served.clear();
+		Files.writeString(data.resolve("current"), "not a version\n");
+		assertEquals("0.3.0", run(updater("0.1.0").update()).version());
+		assertTrue(logText().contains("the current pointer is missing or unreadable: falling back to 0.3.0"),
+			logText());
 	}
 
 	@Test
@@ -390,6 +461,61 @@ public class UpdaterTest
 		assertEquals("0.2.0", run.version());
 		assertTrue(logText().contains("[updater] no release manifest from GitHub: " + RELEASES
 			+ "/latest/download/manifest.json answered 404"), logText());
+	}
+
+	@Test
+	public void aKeepStoppedBetweenItsMovesIsFinishedAtTheNextStart() throws Exception
+	{
+		release(PRIMARY, "0.2.0", Map.of("a.jar", JAR_A));
+		run(updater("0.1.0").update());
+		// The 0.3.0 manifest was being kept: its signature had moved into place, its manifest hadn't, and then the
+		// launcher stopped. The pair on disk is torn (0.2.0's manifest, 0.3.0's signature).
+		byte[] next = manifest("0.3.0", "0.1.0", Map.of("b.jar", JAR_B), null).getBytes(StandardCharsets.UTF_8);
+		Files.write(data.resolve("manifest.json.new"), next);
+		Files.writeString(data.resolve("manifest.json.sig"), sign(PRIMARY, next));
+		served.clear();
+		Updater.Run run = run(updater("0.1.0").update());
+		assertTrue(logText().contains("finished keeping the accepted manifest"), logText());
+		assertArrayEquals(next, Files.readAllBytes(data.resolve("manifest.json")), "the pair is whole again");
+		assertFalse(Files.exists(data.resolve("manifest.json.new")));
+		assertEquals("0.3.0", run.manifest().version, "the finished manifest is the accepted one");
+		assertEquals("0.2.0", run.version(), "its version isn't here (no internet), so the last good one runs");
+	}
+
+	@Test
+	public void aKeepStoppedBeforeItsMovesLeavesTheOldPairStanding() throws Exception
+	{
+		release(PRIMARY, "0.2.0", Map.of("a.jar", JAR_A));
+		run(updater("0.1.0").update());
+		byte[] next = manifest("0.3.0", "0.1.0", Map.of("b.jar", JAR_B), null).getBytes(StandardCharsets.UTF_8);
+		Files.write(data.resolve("manifest.json.new"), next);
+		Files.writeString(data.resolve("manifest.json.new.sig"), sign(PRIMARY, next));
+		served.clear();
+		Updater.Run run = run(updater("0.1.0").update());
+		assertEquals("0.2.0", run.manifest().version, "nothing had moved, so the old pair stands");
+		assertEquals("0.2.0", run.version());
+		assertFalse(Files.exists(data.resolve("manifest.json.new")));
+		assertFalse(Files.exists(data.resolve("manifest.json.new.sig")));
+	}
+
+	@Test
+	public void aTornAcceptedPairIsStoodInForByTheNewestVersionsManifest() throws Exception
+	{
+		release(PRIMARY, "0.2.0", Map.of("a.jar", JAR_A));
+		run(updater("0.1.0").update());
+		// The accepted pair no longer verifies (a disk that lost the signature's bytes) and there is no internet.
+		Files.writeString(data.resolve("manifest.json.sig"), "not a signature");
+		served.clear();
+		Updater.Run run = run(updater("0.1.0").update());
+		assertEquals("0.2.0", run.version(), "the downloaded version still runs");
+		assertEquals(data.resolve("versions").resolve("0.2.0").resolve("manifest.json"), run.manifestFile());
+		assertTrue(logText().contains("the manifest kept with version 0.2.0 stands in for the accepted one"),
+			logText());
+		// Online again, the accepted pair is written anew even though the release is the same.
+		release(PRIMARY, "0.2.0", Map.of("a.jar", JAR_A));
+		run = run(updater("0.1.0").update());
+		assertEquals(data.resolve("manifest.json"), run.manifestFile());
+		assertTrue(logText().contains("accepted the release manifest for version 0.2.0"), logText());
 	}
 
 	@Test
