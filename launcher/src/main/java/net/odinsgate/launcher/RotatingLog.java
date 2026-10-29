@@ -26,13 +26,20 @@ final class RotatingLog
 	{
 	}
 
-	/** Moves {@code file} aside when it has reached {@code maxBytes}, keeping {@code keep} older ones. */
+	/**
+	 * Moves {@code file} aside when it has reached {@code maxBytes}, keeping {@code keep} older ones. The live file
+	 * moves first, to a {@code .moving} name: it is the one move that can fail (a game that still holds it open on
+	 * Windows), and when it does nothing else has been touched, so the older files are not shifted or dropped by a
+	 * launcher that tries again and again.
+	 */
 	static void rotate(Path file, long maxBytes, int keep) throws IOException
 	{
 		if (!Files.isRegularFile(file) || Files.size(file) < maxBytes)
 		{
 			return;
 		}
+		Path moving = file.resolveSibling(file.getFileName() + ".moving");
+		Files.move(file, moving, StandardCopyOption.REPLACE_EXISTING);
 		Files.deleteIfExists(aside(file, keep));
 		for (int i = keep - 1; i >= 1; i--)
 		{
@@ -42,7 +49,7 @@ final class RotatingLog
 				Files.move(older, aside(file, i + 1), StandardCopyOption.REPLACE_EXISTING);
 			}
 		}
-		Files.move(file, aside(file, 1), StandardCopyOption.REPLACE_EXISTING);
+		Files.move(moving, aside(file, 1), StandardCopyOption.REPLACE_EXISTING);
 	}
 
 	/** Opens {@code file} for appending, rotated first, with every line also written to {@code alsoTo}. */

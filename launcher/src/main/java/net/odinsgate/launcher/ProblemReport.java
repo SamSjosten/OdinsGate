@@ -1,11 +1,15 @@
 package net.odinsgate.launcher;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.channels.SeekableByteChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -23,6 +27,8 @@ final class ProblemReport
 {
 	/** How many lines of each log go into the report. */
 	static final int TAIL_LINES = 60;
+	/** How much of a log's end is read for them: a game that ran all day has a log far past the rotation size. */
+	static final int TAIL_BYTES = 64 * 1024;
 	/** A line matching this is replaced whole; the words RuneLite's and our own logs could carry a secret under. */
 	static final Pattern SECRET =
 		Pattern.compile("password|passwd|secret|token|authorization", Pattern.CASE_INSENSITIVE);
@@ -108,8 +114,9 @@ final class ProblemReport
 	}
 
 	/**
-	 * The last {@code count} lines of {@code file}, or null when there is no such file. The bytes are read as
-	 * UTF-8 with anything else shown as the replacement character, since a game's console output isn't always
+	 * The last {@code count} lines of {@code file}, or null when there is no such file. Only the file's last
+	 * {@link #TAIL_BYTES} are read, whatever its size, and a line cut by that edge is left out. The bytes are read
+	 * as UTF-8 with anything else shown as the replacement character, since a game's console output isn't always
 	 * clean UTF-8 and a report must still show the rest.
 	 */
 	static List<String> tail(Path file, int count) throws IOException
@@ -118,8 +125,28 @@ final class ProblemReport
 		{
 			return null;
 		}
-		List<String> all = new String(Files.readAllBytes(file), StandardCharsets.UTF_8).lines().toList();
-		return new ArrayList<>(all.subList(Math.max(0, all.size() - count), all.size()));
+		byte[] end;
+		boolean whole;
+		try (SeekableByteChannel channel = Files.newByteChannel(file, StandardOpenOption.READ))
+		{
+			long size = channel.size();
+			long from = Math.max(0, size - TAIL_BYTES);
+			whole = from == 0;
+			channel.position(from);
+			ByteBuffer buffer = ByteBuffer.allocate((int) (size - from));
+			while (buffer.hasRemaining() && channel.read(buffer) >= 0)
+			{
+				// Until the buffer is full or the file ends.
+			}
+			end = Arrays.copyOf(buffer.array(), buffer.position());
+		}
+		List<String> lines = new String(end, StandardCharsets.UTF_8).lines().toList();
+		if (!whole && !lines.isEmpty())
+		{
+			// The first line most likely began before the bytes read did.
+			lines = lines.subList(1, lines.size());
+		}
+		return new ArrayList<>(lines.subList(Math.max(0, lines.size() - count), lines.size()));
 	}
 
 	/**

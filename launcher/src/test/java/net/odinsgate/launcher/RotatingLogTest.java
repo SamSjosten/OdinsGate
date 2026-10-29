@@ -2,6 +2,7 @@ package net.odinsgate.launcher;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.ByteArrayOutputStream;
@@ -38,6 +39,34 @@ public class RotatingLogTest
 			}
 			assertFalse(Files.exists(RotatingLog.aside(log, 3)), "never more than the kept count");
 		}
+	}
+
+	@Test
+	public void aLiveLogThatCannotMoveLeavesTheOlderOnesAlone() throws Exception
+	{
+		Path log = dir.resolve("game.log");
+		Files.writeString(RotatingLog.aside(log, 1), "run 2");
+		Files.writeString(RotatingLog.aside(log, 2), "run 1");
+		Files.writeString(log, "run 3 " + "x".repeat(100));
+		// A folder with something in it where the live log would move first: the move fails, as it does on Windows
+		// when an earlier game still holds the log open.
+		Path blocked = log.resolveSibling("game.log.moving");
+		Files.createDirectories(blocked);
+		Files.writeString(blocked.resolve("in-the-way"), "");
+		assertThrows(java.io.IOException.class, () -> RotatingLog.rotate(log, 100, 3));
+		assertTrue(Files.readString(log).startsWith("run 3"), "the live log is where it was");
+		assertEquals("run 2", Files.readString(RotatingLog.aside(log, 1)));
+		assertEquals("run 1", Files.readString(RotatingLog.aside(log, 2)));
+		assertFalse(Files.exists(RotatingLog.aside(log, 3)));
+
+		Files.delete(blocked.resolve("in-the-way"));
+		Files.delete(blocked);
+		RotatingLog.rotate(log, 100, 3);
+		assertFalse(Files.exists(log));
+		assertFalse(Files.exists(blocked), "the moving name is only ever held for a moment");
+		assertTrue(Files.readString(RotatingLog.aside(log, 1)).startsWith("run 3"));
+		assertEquals("run 2", Files.readString(RotatingLog.aside(log, 2)));
+		assertEquals("run 1", Files.readString(RotatingLog.aside(log, 3)));
 	}
 
 	@Test

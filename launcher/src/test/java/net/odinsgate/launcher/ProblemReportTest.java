@@ -71,6 +71,21 @@ public class ProblemReportTest
 	}
 
 	@Test
+	public void aHugeLogIsReadFromItsEndOnly() throws Exception
+	{
+		Path log = dir.resolve("huge.log");
+		String padding = "x".repeat(90);
+		Files.write(log, IntStream.rangeClosed(1, 5000).mapToObj(i -> "line " + i + " " + padding).toList());
+		assertTrue(Files.size(log) > 4 * ProblemReport.TAIL_BYTES, "well past what is read");
+		List<String> tail = ProblemReport.tail(log, ProblemReport.TAIL_LINES);
+		assertEquals(ProblemReport.TAIL_LINES, tail.size());
+		assertTrue(tail.get(0).startsWith("line 4941 "), tail.get(0));
+		assertTrue(tail.get(tail.size() - 1).startsWith("line 5000 "), tail.get(tail.size() - 1));
+		assertTrue(tail.stream().allMatch(line -> line.startsWith("line ") && line.endsWith(padding)),
+			"every line whole, none cut where the reading began");
+	}
+
+	@Test
 	public void aLogThatIsNotCleanUtf8StillShowsItsLines() throws Exception
 	{
 		Path log = dir.resolve("game.log");
