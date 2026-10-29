@@ -41,6 +41,43 @@ public class RotatingLogTest
 	}
 
 	@Test
+	public void aFileThatStopsTakingWritesLosesTheConsoleNothing() throws Exception
+	{
+		ByteArrayOutputStream fileBytes = new ByteArrayOutputStream();
+		boolean[] diskFull = new boolean[1];
+		java.io.OutputStream file = new java.io.OutputStream()
+		{
+			@Override
+			public void write(int b) throws java.io.IOException
+			{
+				write(new byte[]{(byte) b}, 0, 1);
+			}
+
+			@Override
+			public void write(byte[] bytes, int offset, int length) throws java.io.IOException
+			{
+				if (diskFull[0])
+				{
+					throw new java.io.IOException("No space left on device");
+				}
+				fileBytes.write(bytes, offset, length);
+			}
+		};
+		ByteArrayOutputStream consoleBytes = new ByteArrayOutputStream();
+		try (PrintStream out = RotatingLog.tee(file, consoleBytes))
+		{
+			out.println("before");
+			diskFull[0] = true;
+			out.println("during");
+			out.println("after");
+			assertFalse(out.checkError(), "the file's failure is not the stream's");
+		}
+		String eol = System.lineSeparator();
+		assertEquals("before" + eol, fileBytes.toString(StandardCharsets.UTF_8));
+		assertEquals("before" + eol + "during" + eol + "after" + eol, consoleBytes.toString(StandardCharsets.UTF_8));
+	}
+
+	@Test
 	public void theLauncherLogAppendsRotatesAndReachesTheConsoleToo() throws Exception
 	{
 		Path log = dir.resolve("logs").resolve("launcher.log");

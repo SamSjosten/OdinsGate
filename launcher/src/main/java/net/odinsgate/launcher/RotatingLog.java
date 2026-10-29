@@ -50,8 +50,15 @@ final class RotatingLog
 	{
 		Files.createDirectories(file.toAbsolutePath().getParent());
 		rotate(file, MAX_BYTES, KEEP);
-		OutputStream out = Files.newOutputStream(file, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
-		return new PrintStream(new Tee(out, alsoTo), true, StandardCharsets.UTF_8);
+		return tee(Files.newOutputStream(file, StandardOpenOption.CREATE, StandardOpenOption.APPEND), alsoTo);
+	}
+
+	/**
+	 * A stream writing to {@code file} and {@code alsoTo} alike; a file that stops taking writes costs nothing else.
+	 */
+	static PrintStream tee(OutputStream file, OutputStream alsoTo)
+	{
+		return new PrintStream(new Tee(file, alsoTo), true, StandardCharsets.UTF_8);
 	}
 
 	static Path aside(Path file, int index)
@@ -59,11 +66,17 @@ final class RotatingLog
 		return file.resolveSibling(file.getFileName() + "." + index);
 	}
 
-	/** Writes to a file and a second stream alike; closing closes the file only, the second stream is the caller's. */
+	/**
+	 * Writes to a file and a second stream alike. The file is the one that can fail (a disk full, a folder gone, a
+	 * permission changed under a running launcher); when it does, it is given up on and the second stream, the
+	 * console or what a wrapper script collects, still gets every line. Closing closes the file only, the second
+	 * stream is the caller's.
+	 */
 	private static final class Tee extends OutputStream
 	{
 		private final OutputStream file;
 		private final OutputStream also;
+		private boolean fileGivenUp;
 
 		Tee(OutputStream file, OutputStream also)
 		{
@@ -74,21 +87,51 @@ final class RotatingLog
 		@Override
 		public void write(int b) throws IOException
 		{
-			file.write(b);
+			if (!fileGivenUp)
+			{
+				try
+				{
+					file.write(b);
+				}
+				catch (IOException e)
+				{
+					fileGivenUp = true;
+				}
+			}
 			also.write(b);
 		}
 
 		@Override
 		public void write(byte[] bytes, int offset, int length) throws IOException
 		{
-			file.write(bytes, offset, length);
+			if (!fileGivenUp)
+			{
+				try
+				{
+					file.write(bytes, offset, length);
+				}
+				catch (IOException e)
+				{
+					fileGivenUp = true;
+				}
+			}
 			also.write(bytes, offset, length);
 		}
 
 		@Override
 		public void flush() throws IOException
 		{
-			file.flush();
+			if (!fileGivenUp)
+			{
+				try
+				{
+					file.flush();
+				}
+				catch (IOException e)
+				{
+					fileGivenUp = true;
+				}
+			}
 			also.flush();
 		}
 
