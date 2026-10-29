@@ -17,6 +17,12 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
       - run: ./gradlew build
 
+  deploy-script:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: deploy/auto-deploy-test.sh
+
   tick-recorder:
     runs-on: ubuntu-latest
     steps:
