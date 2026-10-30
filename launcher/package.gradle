@@ -1,7 +1,8 @@
 // Packaging the launcher for friends (README.md, "Installers"), applied by build.gradle: a jlink runtime that keeps
 // bin/java, jpackage's app image over installDist's jars and the notices, the self-test and the scan run from that
-// image, and the Windows installer (Inno Setup) around it. Every task uses the JDK that runs Gradle (CI's Temurin
-// 21), so the bundled runtime is that JDK's.
+// image, and the installers around it: Inno Setup on Windows, a disk image on a Mac. Every task uses the JDK that
+// runs Gradle (CI's Temurin 21), so the bundled runtime is that JDK's, and a Mac build is for the chip it runs on
+// (jpackage makes no universal app; Apple chips need the arm64 build for RuneLite's natives).
 import javax.inject.Inject
 
 def hostOs = System.getProperty('os.name').toLowerCase(Locale.ROOT)
@@ -10,6 +11,8 @@ def onMac = hostOs.contains('mac')
 def jdk = System.getProperty('java.home')
 def exeSuffix = onWindows ? '.exe' : ''
 def appName = 'OdinsGate'
+// The chip this build is for, as the disk images are named: arm64 (Apple chips) or x64 (Intel).
+def chip = System.getProperty('os.arch').toLowerCase(Locale.ROOT).matches('aarch64|arm64') ? 'arm64' : 'x64'
 
 // A JRE as Adoptium ships one, less what a game never needs (JFR, the debugger and management agents, incubators):
 // the modules the spike ran RuneLite 1.13.4 on. java.se is every java.* module; the rest are the JDK's own that a
@@ -52,7 +55,10 @@ abstract class RuntimeImage extends DefaultTask
 }
 
 // jpackage's app image: the native executable, the jars in the app folder (the main jar's Class-Path names the
-// others, which is how jpackage's launcher finds them) and the runtime above, copied as it is.
+// others, which is how jpackage's launcher finds them) and the runtime above, copied as it is. On a Mac the bundle
+// id, the name the Dock and menu bar show, and the entitlements jpackage signs with (its ad-hoc signature now,
+// the Developer ID one later): RuneLite's two, which let a JVM under the hardened runtime compile at run time and
+// load RuneLite's native libraries.
 abstract class AppImage extends DefaultTask
 {
 	@Input abstract Property<String> getJpackage()
@@ -61,6 +67,7 @@ abstract class AppImage extends DefaultTask
 	@Input abstract Property<String> getMainJar()
 	@InputDirectory abstract DirectoryProperty getInput()
 	@InputDirectory abstract DirectoryProperty getRuntime()
+	@Input abstract ListProperty<String> getMacOptions()
 	@OutputDirectory abstract DirectoryProperty getDest()
 	@Inject abstract ExecOperations getExecOperations()
 	@Inject abstract FileSystemOperations getFileSystemOperations()
@@ -83,7 +90,45 @@ abstract class AppImage extends DefaultTask
 				'--input', input.get().asFile.path, '--main-jar', mainJar.get(),
 				'--main-class', 'net.odinsgate.launcher.Main', '--runtime-image', runtime.get().asFile.path,
 				'--dest', out.path
+			args macOptions.get()
 		}
+	}
+}
+
+// The Mac disk image around the app image (the one the self-test and the scan ran on), named for the chip:
+// jpackage writes <name>-<version>.dmg, which is moved to the release's fixed name.
+abstract class MacDmg extends DefaultTask
+{
+	@Input abstract Property<String> getJpackage()
+	@InputDirectory abstract DirectoryProperty getAppImage()
+	@Input abstract Property<String> getProducedName()
+	@Input abstract Property<String> getDmgName()
+	@OutputDirectory abstract DirectoryProperty getDest()
+	@Inject abstract ExecOperations getExecOperations()
+	@Inject abstract FileSystemOperations getFileSystemOperations()
+
+	@TaskAction
+	void pack()
+	{
+		File out = dest.get().asFile
+		File scratch = new File(out, 'jpackage')
+		fileSystemOperations.delete { delete(scratch) }
+		execOperations.exec {
+			executable = jpackage.get()
+			args '--type', 'dmg', '--app-image', appImage.get().asFile.path, '--dest', scratch.path
+		}
+		File produced = new File(scratch, producedName.get())
+		if (!produced.isFile())
+		{
+			throw new GradleException("jpackage made no $produced; it holds: " + scratch.list().join(', '))
+		}
+		File dmg = new File(out, dmgName.get())
+		fileSystemOperations.delete { delete(dmg) }
+		if (!produced.renameTo(dmg))
+		{
+			throw new GradleException("$produced could not be moved to $dmg")
+		}
+		fileSystemOperations.delete { delete(scratch) }
 	}
 }
 
@@ -114,6 +159,8 @@ tasks.register('appImage', AppImage) {
 	mainJar = "odinsgate-launcher-${project.version}.jar"
 	input = layout.buildDirectory.dir('package-input')
 	runtime = tasks.named('runtimeImage', RuntimeImage).flatMap { it.output }
+	macOptions = onMac ? ['--mac-package-identifier', 'net.odinsgate.launcher', '--mac-package-name', "Odin's Gate",
+		'--mac-entitlements', file('package/mac/entitlements.plist').path] : []
 	dest = layout.buildDirectory.dir('image')
 }
 
@@ -156,6 +203,21 @@ tasks.register('appImageScan', Exec) {
 	inputs.dir imageDir
 	inputs.file 'package/allowed-jars.txt'
 	outputs.upToDateWhen { false }
+}
+
+// The Mac disk image, OdinsGate-mac-arm64.dmg or OdinsGate-mac-x64.dmg in build/installer: the app image for a
+// friend to drag to Applications, ad-hoc signed by jpackage until PR 20 signs it for real.
+tasks.register('macDmg', MacDmg) {
+	group = 'distribution'
+	description = 'The Mac disk image around the app image (a Mac only, for its own chip).'
+	dependsOn 'appImage'
+	onlyIf('a disk image is made on a Mac') { onMac }
+	it.jpackage = "$jdk/bin/jpackage"
+	// it.: the task's property, not the appImage task the project knows by that name.
+	it.appImage.set(imageDir)
+	it.producedName = "${appName}-${project.version}.dmg"
+	it.dmgName = chip == 'arm64' ? 'OdinsGate-mac-arm64.dmg' : 'OdinsGate-mac-x64.dmg'
+	it.dest = layout.buildDirectory.dir('installer')
 }
 
 // The per-user installer around the image, OdinsGate-Setup.exe in build/installer, made with Inno Setup
