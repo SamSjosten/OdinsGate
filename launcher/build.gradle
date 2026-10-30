@@ -58,6 +58,10 @@ test {
 	useJUnitPlatform()
 	// The window's panel is tested without a display: Swing's lightweight components work headless, a frame doesn't.
 	systemProperty 'java.awt.headless', 'true'
+	// Besides their classes, the tests read this module's packaging files and the server's pin table: inputs, so CI's
+	// build cache never hands back a pass from before a change to them.
+	inputs.files(fileTree(projectDir) { exclude 'build/**', 'src/**', '.gradle/**' }).withPathSensitivity(PathSensitivity.RELATIVE)
+	inputs.file('../src/main/resources/runelite-pins.json').withPathSensitivity(PathSensitivity.RELATIVE)
 }
 
 // The weekly pin health check (.github/workflows/pin-health.yml): every pin in the server's runelite-pins.json still
