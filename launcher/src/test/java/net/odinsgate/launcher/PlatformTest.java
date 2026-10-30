@@ -43,7 +43,9 @@ public class PlatformTest
 	public void linuxDataFollowsXdg()
 	{
 		Platform linux = new Platform(Platform.Os.LINUX, Platform.Arch.X64);
-		assertEquals(Path.of("/xdg/data/odinsgate"), linux.dataDir(Map.of("XDG_DATA_HOME", "/xdg/data"), HOME));
+		// An absolute XDG_DATA_HOME on the system running the test: /xdg/data isn't absolute on Windows.
+		Path xdg = Path.of("/xdg/data").toAbsolutePath();
+		assertEquals(xdg.resolve("odinsgate"), linux.dataDir(Map.of("XDG_DATA_HOME", xdg.toString()), HOME));
 		assertEquals(HOME.resolve(".local").resolve("share").resolve("odinsgate"), linux.dataDir(Map.of(), HOME));
 		// The XDG spec calls a relative XDG_DATA_HOME invalid: it is ignored, not resolved against the working dir.
 		assertEquals(HOME.resolve(".local").resolve("share").resolve("odinsgate"),
