@@ -1,8 +1,9 @@
 name: release
 # Publishes a launcher release when a merge to main changes launcher/version.txt (launcher/README.md, "Releases"):
-# builds the jars, writes the manifest with the launcher's own release tool (net.odinsgate.launcher.Release), makes a
-# draft release v<version>, uploads the jars, then the manifest and its signature last, and only then publishes it,
-# so releases/latest/download never points at a half-uploaded release. The signing key lives only in the `release`
+# builds the jars and the installers, writes the manifest with the launcher's own release tool
+# (net.odinsgate.launcher.Release), makes a draft release v<version>, uploads the jars and the installers, then the
+# manifest and its signature last, and only then publishes it, so releases/latest/download never points at a
+# half-uploaded release. The signing key lives only in the `release`
 # Environment, which has Sam as its required reviewer: one click per release, and no pull request run ever sees it.
 # A pull request that touches the release path, or a run by hand with dry_run, does the same build and signs with a
 # throwaway key made in the run, and publishes nothing.
@@ -17,6 +18,10 @@ on:
       - launcher/min-bootstrap-version.txt
       - launcher/build.gradle
       - launcher/src/main/java/net/odinsgate/launcher/Release.java
+      - launcher/package.gradle
+      - launcher/package/**
+      - launcher/THIRD-PARTY-NOTICES.txt
+      - .github/actions/windows-installer/action.yml
       - .github/workflows/release.yml
   workflow_dispatch:
     inputs:
@@ -102,8 +107,21 @@ jobs:
           path: dist/
           if-no-files-found: error
 
+  # The Windows installer, self-tested on the runner before and after an install (launcher/README.md, "Installers").
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/windows-installer
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installer-windows
+          path: launcher/build/installer/OdinsGate-Setup.exe
+          if-no-files-found: error
+
   publish:
-    needs: build
+    needs: [build, windows]
     if: needs.build.outputs.publish == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -123,6 +141,10 @@ jobs:
         with:
           name: release-files
           path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: installer-windows
+          path: installers
       - name: Sign with the release key and check it against the keys launchers trust
         shell: bash
         env:
@@ -136,16 +158,16 @@ jobs:
           # Without --key: the keys built into this build's TrustedKeys. A manifest they don't verify is one no
           # installed launcher would take, so nothing is published.
           java -cp 'dist/*' "$TOOL" verify --manifest dist/manifest.json --signature dist/manifest.json.sig
-      - name: Draft release, the jars, then the manifest and its signature, then publish
+      - name: Draft release, the jars and the installers, then the manifest and its signature, then publish
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           notes="Odin's Gate launcher $VERSION. Installed launchers update themselves from this release's manifest;"
-          notes="$notes the installers are on the download page."
+          notes="$notes OdinsGate-Setup.exe is the Windows installer."
           gh release create "v$VERSION" --draft --target "$GITHUB_SHA" --title "Odin's Gate launcher $VERSION" \
             --notes "$notes"
-          gh release upload "v$VERSION" dist/*.jar
+          gh release upload "v$VERSION" dist/*.jar installers/OdinsGate-Setup.exe
           gh release upload "v$VERSION" dist/manifest.json dist/manifest.json.sig
           gh release edit "v$VERSION" --draft=false --latest
           echo "Published https://github.com/$GITHUB_REPOSITORY/releases/tag/v$VERSION"

@@ -72,9 +72,10 @@ public class ConnectGuardTest
 		}
 	}
 
+	/** The log so far, with println's line separator as {@code \n} whatever the system (Windows runs this too). */
 	private String logText()
 	{
-		return logBytes.toString(StandardCharsets.UTF_8);
+		return logBytes.toString(StandardCharsets.UTF_8).replace("\r\n", "\n");
 	}
 
 	private static Proxy refused(List<Proxy> answer)

@@ -159,6 +159,15 @@ public class MainTest
 	}
 
 	@Test
+	public void theSelfTestRunsWithoutAManifestOrKeys()
+	{
+		int code = Main.run(new String[] {"--self-test", "--home", dir.resolve("data").toString()}, out, null);
+		assertEquals(0, code, output());
+		assertTrue(output().contains("[self-test] passed"), output());
+		assertTrue(Files.isRegularFile(dir.resolve("data").resolve("logs").resolve("launcher.log")), "logged too");
+	}
+
+	@Test
 	public void aManifestIsNeededForNow()
 	{
 		assertEquals(Main.EXIT_USAGE, Main.run(new String[]{"--auto"}, out));

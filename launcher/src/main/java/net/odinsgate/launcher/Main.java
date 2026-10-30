@@ -22,6 +22,7 @@ import java.util.regex.Pattern;
  * window ({@link LauncherWindow}); {@code --auto} (the test VM, CI) and a machine without a display get the same
  * steps straight through with nobody at the screen ({@link LauncherRun#run}). The runtime this JVM runs on is the
  * one the game gets (the bundled runtime keeps {@code bin/java}), and this code's jars are the loader's class path.
+ * {@code --self-test} ({@link SelfTest}) checks exactly those two things against a fake server and stops.
  *
  * <p>{@link #run(String[], PrintStream)} is the one contract between an installed shell and every later version
  * it may download: public, static, these arguments, an exit code back. It stays.
@@ -85,6 +86,16 @@ public final class Main
 		{
 			out.println("[launcher] " + e.getMessage());
 			return EXIT_USAGE;
+		}
+		if (options.selfTest())
+		{
+			// Before anything that needs a manifest or the keys: the self-test dials nothing real.
+			Path dataDir = options.dataDir(Platform.detect(), System.getenv(),
+				Path.of(System.getProperty("user.home")));
+			try (PrintStream log = openLog(dataDir, out))
+			{
+				return SelfTest.run(Platform.detect(), thisJvm(), dataDir, log);
+			}
 		}
 		if (options.manifest() == null && updaters == null)
 		{
