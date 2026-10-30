@@ -168,9 +168,11 @@ public class MainTest
 	}
 
 	@Test
-	public void aManifestIsNeededForNow()
+	public void aBuildWithoutKeysNeedsAManifest()
 	{
-		assertEquals(Main.EXIT_USAGE, Main.run(new String[]{"--auto"}, out));
+		// The null updaters is what Main.run(args, out) passes for a build whose TrustedKeys is empty, as every build
+		// before 1.0.0 was; a real build now goes to GitHub, which no test does.
+		assertEquals(Main.EXIT_USAGE, Main.run(new String[]{"--auto"}, out, null));
 		assertTrue(output().contains("--manifest"), output());
 		assertTrue(output().contains(LaunchOptions.USAGE), output());
 	}
