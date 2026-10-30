@@ -86,8 +86,20 @@ public class SignaturesTest
 	public void anEmptyKeyListTrustsNothing()
 	{
 		assertFalse(Signatures.verify(DATA, SIGNATURE, List.of()));
-		// Which is the production state until the release PR ships the real public keys.
-		assertEquals(List.of(), TrustedKeys.trusted());
+	}
+
+	@Test
+	public void theBuiltInKeysAreSamsTwoPrimaryFirst()
+	{
+		// The public halves Sam made on 2026-10-30: the primary signs releases, the backup stays offline. Their private
+		// halves are nowhere a test could reach, so nothing signed here verifies against them.
+		List<PublicKey> trusted = TrustedKeys.trusted();
+		assertEquals(2, trusted.size());
+		assertEquals("MCowBQYDK2VwAyEAoXNZypWro8tqPi6YuSDLkz/Wfba7JU3Vc2sCSc9QB1E=",
+			Base64.getEncoder().encodeToString(trusted.get(0).getEncoded()));
+		assertEquals("MCowBQYDK2VwAyEAnWYvWelLc6uLP0Pv3nfaq/t5QPpZSDGnintu6EmU400=",
+			Base64.getEncoder().encodeToString(trusted.get(1).getEncoded()));
+		assertFalse(Signatures.verify(DATA, SIGNATURE, trusted));
 	}
 
 	@Test
