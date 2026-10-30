@@ -41,6 +41,12 @@ public final class Names
 	/** The Mac disk image for Intel Macs, the same name in every release. */
 	public static final String MAC_INSTALLER_X64 = "OdinsGate-mac-x64.dmg";
 
+	/**
+	 * The Linux archive, the same name in every release: the app image under one OdinsGate/ folder. x64 is the one
+	 * CI builds and releases; a build on an arm64 machine names itself -arm64 the same way (package.gradle).
+	 */
+	public static final String LINUX_INSTALLER_X64 = "OdinsGate-linux-x64.tar.gz";
+
 	private Names()
 	{
 	}
