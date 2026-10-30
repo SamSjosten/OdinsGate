@@ -119,6 +119,20 @@ jobs:
           path: launcher/build/installer/OdinsGate-mac-${{ matrix.chip }}.dmg
           if-no-files-found: error
 
+  # The Linux archive (launcher/README.md, "Installers"): the app image, its self-test and scan, the tar.gz, and a
+  # copy extracted from it self-tested under a virtual display, so the window opens on a runner too.
+  installer-linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/linux-tarball
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OdinsGate-linux-x64
+          path: launcher/build/installer/OdinsGate-linux-x64.tar.gz
+          if-no-files-found: error
+
   # The VM's launch scripts: the parts that need no VM, run with PowerShell 7 on Linux.
   launch-scripts:
     runs-on: ubuntu-latest
