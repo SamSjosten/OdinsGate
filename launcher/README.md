@@ -225,6 +225,11 @@ Friends install one file for their system and nothing else: the installer carrie
   signs it ad hoc with `package/mac/entitlements.plist` (RuneLite's two, `allow-jit` and
   `disable-library-validation`, which a JVM under the hardened runtime needs to compile and to load RuneLite's
   natives), the app and its java alike; PR 20 replaces that with a Developer ID signature, notarized and stapled.
+  macOS wants a bundle version whose first number is above zero (jpackage refuses `0.x.y` there), so a launcher
+  still at `0.x.y` is bundled as `1.x.y`: the shell's version, what Finder shows for the app. The launcher's own
+  version, in its window, the status file and the manifest, is the jar's and stays as it is; from `1.0.0` on the
+  two agree, which is a reason to make the first release friends get `1.0.0`. The CI job checks the bundle says
+  what this mapping says.
   Until then macOS says the app can't be checked: since Sequoia a friend goes to System Settings, Privacy &
   Security, Open Anyway, and a "damaged" message means the quarantine flag has to go (`xattr -d
   com.apple.quarantine`). The Intel build stops when no friend has an Intel Mac (GitHub retires those runners in

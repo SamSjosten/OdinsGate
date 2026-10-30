@@ -32,6 +32,16 @@ runs:
         cp -R "$mount/OdinsGate.app" "$HOME/Applications/"
         hdiutil detach "$mount" -quiet
         app="$HOME/Applications/OdinsGate.app"
+        # The bundle's version as package.gradle maps it: a launcher at 0.x.y is bundled as 1.x.y, since macOS
+        # wants a first number above zero; from 1.0.0 on the two agree.
+        version=$(tr -d '[:space:]' < launcher/version.txt)
+        case $version in 0.*) expected="1${version#0}" ;; *) expected=$version ;; esac
+        shown=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")
+        if [[ $shown != "$expected" ]]; then
+          echo "the app's Info.plist says version $shown, not $expected (launcher $version)"
+          exit 1
+        fi
+        echo "the app is bundled as version $shown (launcher $version)"
         codesign --verify --deep --strict --verbose=2 "$app" 2>&1 | tail -3 || echo "(not signed for real yet)"
         data="$RUNNER_TEMP/odinsgate-installed-self-test"
         code=0

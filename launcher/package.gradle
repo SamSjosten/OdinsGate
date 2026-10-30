@@ -13,6 +13,12 @@ def exeSuffix = onWindows ? '.exe' : ''
 def appName = 'OdinsGate'
 // The chip this build is for, as the disk images are named: arm64 (Apple chips) or x64 (Intel).
 def chip = System.getProperty('os.arch').toLowerCase(Locale.ROOT).matches('aarch64|arm64') ? 'arm64' : 'x64'
+// The version the bundle carries. macOS wants one whose first number is above zero (jpackage refuses 0.x.y there),
+// so a launcher still at 0.x.y is bundled as 1.x.y on a Mac: the shell's version, what Finder shows for the app.
+// The launcher's own version (its window, the status file, the manifest) is the jar's and stays as it is; from
+// 1.0.0 on the two agree. The Mac CI job checks the bundle says this (.github/actions/mac-installer).
+def launcherVersion = project.version.toString()
+def bundleVersion = onMac && launcherVersion.startsWith('0.') ? '1' + launcherVersion.substring(1) : launcherVersion
 
 // A JRE as Adoptium ships one, less what a game never needs (JFR, the debugger and management agents, incubators):
 // the modules the spike ran RuneLite 1.13.4 on. java.se is every java.* module; the rest are the JDK's own that a
@@ -101,6 +107,7 @@ abstract class MacDmg extends DefaultTask
 {
 	@Input abstract Property<String> getJpackage()
 	@InputDirectory abstract DirectoryProperty getAppImage()
+	@Input abstract Property<String> getAppVersion()
 	@Input abstract Property<String> getProducedName()
 	@Input abstract Property<String> getDmgName()
 	@OutputDirectory abstract DirectoryProperty getDest()
@@ -113,9 +120,12 @@ abstract class MacDmg extends DefaultTask
 		File out = dest.get().asFile
 		File scratch = new File(out, 'jpackage')
 		fileSystemOperations.delete { delete(scratch) }
+		// --app-version again: without it jpackage names the disk image for its default version, 1.0, whatever the
+		// app image says.
 		execOperations.exec {
 			executable = jpackage.get()
-			args '--type', 'dmg', '--app-image', appImage.get().asFile.path, '--dest', scratch.path
+			args '--type', 'dmg', '--app-image', appImage.get().asFile.path, '--app-version', appVersion.get(),
+				'--dest', scratch.path
 		}
 		File produced = new File(scratch, producedName.get())
 		if (!produced.isFile())
@@ -155,7 +165,7 @@ tasks.register('appImage', AppImage) {
 	dependsOn 'packageInput'
 	jpackage = "$jdk/bin/jpackage$exeSuffix"
 	imageName.set(appName)
-	appVersion = project.version.toString()
+	appVersion = bundleVersion
 	mainJar = "odinsgate-launcher-${project.version}.jar"
 	input = layout.buildDirectory.dir('package-input')
 	runtime = tasks.named('runtimeImage', RuntimeImage).flatMap { it.output }
@@ -215,7 +225,8 @@ tasks.register('macDmg', MacDmg) {
 	it.jpackage = "$jdk/bin/jpackage"
 	// it.: the task's property, not the appImage task the project knows by that name.
 	it.appImage.set(imageDir)
-	it.producedName = "${appName}-${project.version}.dmg"
+	it.appVersion = bundleVersion
+	it.producedName = "${appName}-${bundleVersion}.dmg"
 	it.dmgName = chip == 'arm64' ? 'OdinsGate-mac-arm64.dmg' : 'OdinsGate-mac-x64.dmg'
 	it.dest = layout.buildDirectory.dir('installer')
 }
