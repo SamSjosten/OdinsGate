@@ -184,8 +184,11 @@ Friends install one file for their system and nothing else: the installer carrie
 
 - The runtime: `./gradlew -p launcher runtimeImage` runs jlink over the JDK that runs Gradle (CI's Temurin 21) into
   `build/runtime`, with the modules of a JRE as Adoptium ships one (`java.se` and the JDK's own modules a JRE
-  carries, `jdk.crypto.ec` among them, without which no TLS handshake to GitHub or RuneLite would succeed) less what
-  a game never needs (JFR, the debugger and management agents). It keeps `bin/java`: jpackage's own jlink run strips
+  carries, `jdk.crypto.ec` among them, without which no TLS handshake to GitHub or RuneLite would succeed, and on
+  Windows `jdk.crypto.mscapi`, the Windows certificate store, which RuneLite reads its trust roots from at every
+  start and exits at once without: 1.0.0 shipped without it and no game started from the installed launcher, which
+  a full JDK, as the test VMs run, never shows) less what a game never needs (JFR, the debugger and management
+  agents). It keeps `bin/java`: jpackage's own jlink run strips
   it, and the game's child JVM is started from it, so the runtime is made here first and jpackage takes it as it is.
 - The app image: `appImage` runs jpackage over installDist's jars and `THIRD-PARTY-NOTICES.txt` into `build/image`.
   jpackage's launcher puts only the main jar on the class path and follows its `Class-Path`, which `build.gradle`
@@ -195,7 +198,9 @@ Friends install one file for their system and nothing else: the installer carrie
   The version must be three numbers (`launcher/version.txt`), which jpackage on Windows insists on.
 - `--self-test` (`SelfTest`): what `appImageSelfTest` runs from the image's executable, and what a friend can run to
   check an installation. Nothing real is dialed: a fake server on loopback stands in for ours. It checks that the
-  runtime has its java, that the server check (on the runtime's HTTP client) finds the fake server ready, that the
+  runtime has its java, on Windows that the runtime opens the Windows certificate store (`Windows-ROOT`, the
+  `jdk.crypto.mscapi` module above), that the server check (on the runtime's HTTP client) finds the fake server
+  ready, that the
   game's command line exactly as `ClientCommand` builds it starts a child JVM from that java on this code's jars
   (`Loader --self-test`: the connect guard set, the fake game port reached through it, `192.0.2.1:80` refused by the
   guard itself and counted, so a guard that isn't there can't pass), and, where there is a display, that the window
@@ -303,8 +308,11 @@ installers, then the manifest and its `.sig` last, and only then publishes it as
      bumps `version.txt`: its merge is the first release (done 2026-10-30, version 1.0.0). Before it every real run
      stopped at `verify` with "no release keys are built into this launcher yet".
   4. `.github/CODEOWNERS` names Sam for `.github/workflows/`, so a change to the release path asks for his review.
-- A release that turns out broken ships again as a new, higher version: the updater never downgrades. A primary key
-  lost or leaked: a manifest signed by the backup key names a new primary in `keys.primary`, and the next release's
+- A release that turns out broken ships again as a new, higher version: the updater never downgrades. A fix to the
+  runtime (1.0.1, 2026-10-30: the Windows certificate store module) also raises `min-bootstrap-version.txt` to the
+  new version, since the self-update replaces jars and never the runtime: every older launcher then shows "Please
+  download the new installer." and the download page, and the installer replaces the installation in place. A
+  primary key lost or leaked: a manifest signed by the backup key names a new primary in `keys.primary`, and the next release's
   jars carry it in `TrustedKeys` (see `Updater`).
 
 ## Revision bump (241 to 242)

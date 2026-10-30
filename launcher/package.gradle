@@ -23,12 +23,16 @@ def bundleVersion = onMac && launcherVersion.startsWith('0.') ? '1' + launcherVe
 
 // A JRE as Adoptium ships one, less what a game never needs (JFR, the debugger and management agents, incubators):
 // the modules the spike ran RuneLite 1.13.4 on. java.se is every java.* module; the rest are the JDK's own that a
-// JRE carries, jdk.crypto.ec among them, without which no TLS handshake to GitHub or RuneLite would succeed. jlink
-// stops the build on a name the JDK doesn't have.
+// JRE carries, jdk.crypto.ec among them, without which no TLS handshake to GitHub or RuneLite would succeed. On
+// Windows jdk.crypto.mscapi too, the Windows certificate store (the Windows-ROOT and Windows-MY key stores):
+// RuneLite reads its trust roots from Windows-ROOT at every start and exits at once without it, which is how 1.0.0
+// failed on the first PC it was installed on (the spike and the test VMs ran on a full JDK, which has it). The
+// module exists in a Windows JDK alone, and jlink stops the build on a name the JDK doesn't have, so it is named on
+// Windows alone; SelfTest checks the store opens, on every built Windows installer.
 def runtimeModules = ['java.se', 'jdk.accessibility', 'jdk.charsets', 'jdk.crypto.cryptoki', 'jdk.crypto.ec',
 	'jdk.dynalink', 'jdk.httpserver', 'jdk.jsobject', 'jdk.localedata', 'jdk.management', 'jdk.naming.dns',
 	'jdk.naming.rmi', 'jdk.net', 'jdk.nio.mapmode', 'jdk.sctp', 'jdk.security.auth', 'jdk.security.jgss',
-	'jdk.unsupported', 'jdk.unsupported.desktop', 'jdk.xml.dom', 'jdk.zipfs']
+	'jdk.unsupported', 'jdk.unsupported.desktop', 'jdk.xml.dom', 'jdk.zipfs'] + (onWindows ? ['jdk.crypto.mscapi'] : [])
 
 // jpackage's layout differs by system: where the executable, the jars (with the notices) and the runtime's home are.
 def imageDir = layout.buildDirectory.dir('image/' + appName + (onMac ? '.app' : '')).get()

@@ -12,7 +12,12 @@ import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.GeneralSecurityException;
+import java.security.KeyStore;
 import java.time.Duration;
+import javax.net.ssl.TrustManager;
+import javax.net.ssl.TrustManagerFactory;
+import javax.net.ssl.X509TrustManager;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
@@ -23,7 +28,9 @@ import javax.swing.SwingUtilities;
  * {@code --self-test}: what CI runs on every built installer, on the system it is for, and what a friend can run to
  * check an installation. Nothing real is dialed and nothing downloaded; a fake server on this machine stands in for
  * ours. In order: the bundled runtime still has its java (jpackage strips it unless the runtime is made first, as
- * package.gradle does); the server check, on the runtime's HTTP client, finds the fake server ready; the game's
+ * package.gradle does); on Windows, this runtime opens the Windows certificate store, which RuneLite reads its trust
+ * roots from at every start (the {@code jdk.crypto.mscapi} module, which jlink leaves out unless named: without it
+ * the game exits at once); the server check, on the runtime's HTTP client, finds the fake server ready; the game's
  * command line, exactly as a launch builds it ({@link ClientCommand}), starts a child JVM from that java on this
  * code's jars, whose {@link Loader} sets the connect guard, reaches the fake server through it and is refused
  * elsewhere; and where there is a display, the window opens with its title and closes again (the frame itself is
@@ -38,6 +45,10 @@ public final class SelfTest
 	/** Where the self-test keeps its game home, runtime config and the child's output, under the data folder. */
 	static final String DIR = "self-test";
 	static final String CHILD_LOG = "self-test-child.log";
+	/** The Windows certificate store's key store type, as RuneLite names it. */
+	static final String WINDOWS_ROOT = "Windows-ROOT";
+	/** The property RuneLite sets to {@value #WINDOWS_ROOT} while it loads that store. */
+	static final String TRUST_STORE_TYPE = "javax.net.ssl.trustStoreType";
 	static final int REVISION = 241;
 	private static final String MODULUS = "ab".repeat(128);
 	private static final String COMMIT = "0".repeat(40);
@@ -71,6 +82,7 @@ public final class SelfTest
 		log.println("[self-test] launcher " + Main.VERSION + " on " + platform.os() + " " + platform.arch()
 			+ ", runtime " + installed.runtimeDir() + ", data in " + dataDir);
 		Path java = test.runtime();
+		test.windowsCertificateStore();
 		FakeServer server = null;
 		try
 		{
@@ -113,6 +125,58 @@ public final class SelfTest
 		}
 		ok("the runtime at " + installed.runtimeDir() + " has its java");
 		return java;
+	}
+
+	/**
+	 * On Windows, the certificate store opens in this runtime, which is the one the game runs on, the way RuneLite
+	 * opens it at every start: {@code javax.net.ssl.trustStoreType} set to {@value #WINDOWS_ROOT} and the default
+	 * trust manager factory initialised from it. RuneLite leaves the property set when that throws, so its HTTP
+	 * client can't be built either and the game stops before its window; a runtime linked without
+	 * {@code jdk.crypto.mscapi} (1.0.0) did just that, while a full JDK has the module, which is why only an
+	 * installer shows it. The property is restored here whatever happens.
+	 */
+	private void windowsCertificateStore()
+	{
+		if (platform.os() != Platform.Os.WINDOWS)
+		{
+			log.println("[self-test] not Windows, so the Windows certificate store isn't looked for");
+			return;
+		}
+		String old = System.setProperty(TRUST_STORE_TYPE, WINDOWS_ROOT);
+		try
+		{
+			KeyStore store = KeyStore.getInstance(WINDOWS_ROOT);
+			store.load(null, null);
+			TrustManagerFactory factory = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+			factory.init((KeyStore) null);
+			int roots = 0;
+			for (TrustManager manager : factory.getTrustManagers())
+			{
+				if (manager instanceof X509TrustManager x509)
+				{
+					roots += x509.getAcceptedIssuers().length;
+				}
+			}
+			ok("the runtime opens the Windows certificate store " + WINDOWS_ROOT + " the way the game does ("
+				+ store.size() + " certificates, " + roots + " trust roots)");
+		}
+		catch (GeneralSecurityException | IOException | RuntimeException e)
+		{
+			fail("the runtime can't open the Windows certificate store " + WINDOWS_ROOT + ", which the game reads its "
+				+ "trust roots from at every start, so no game would start: " + e
+				+ " (the runtime was linked without jdk.crypto.mscapi)");
+		}
+		finally
+		{
+			if (old == null)
+			{
+				System.clearProperty(TRUST_STORE_TYPE);
+			}
+			else
+			{
+				System.setProperty(TRUST_STORE_TYPE, old);
+			}
+		}
 	}
 
 	/** The real check, on this runtime's HTTP client and sockets, against the fake server: it must come up ready. */

@@ -37,6 +37,9 @@ public class SelfTestTest
 		int code = SelfTest.run(Platform.detect(), Main.thisJvm(), dir, out);
 		assertEquals(0, code, log());
 		assertTrue(log().contains("[self-test] ok the runtime at "), log());
+		assertTrue(log().contains("not Windows, so the Windows certificate store isn't looked for")
+			|| log().contains("[self-test] ok the runtime opens the Windows certificate store Windows-ROOT the way the "
+			+ "game does ("), log());
 		assertTrue(log().contains("ready at revision 241"), log());
 		assertTrue(log().contains("[self-test] ok the child JVM from "), log());
 		assertTrue(log().contains("child: " + Loader.SELF_TEST_OK), log());
@@ -45,6 +48,36 @@ public class SelfTestTest
 		assertTrue(log().contains("[self-test] passed"), log());
 		assertTrue(Files.isRegularFile(dir.resolve(SelfTest.DIR).resolve(SelfTest.CHILD_LOG)), "the child's output");
 		assertTrue(Files.isRegularFile(dir.resolve(SelfTest.DIR).resolve(Launch.RTCONF)), "the runtime config");
+	}
+
+	/**
+	 * On Windows this JDK has the store, so the step passes; elsewhere a platform claiming Windows fails it the way an
+	 * installer's runtime linked without jdk.crypto.mscapi does, naming the module (the java.exe it then looks for
+	 * is missing too, a second, separate failure).
+	 */
+	@Test
+	public void theWindowsCertificateStoreMustOpenWhereThePlatformIsWindows()
+	{
+		Platform windows = new Platform(Platform.Os.WINDOWS, Platform.detect().arch());
+		String typeBefore = System.getProperty(SelfTest.TRUST_STORE_TYPE);
+		int code = SelfTest.run(windows, Main.thisJvm(), dir, out);
+		if (Platform.detect().os() == Platform.Os.WINDOWS)
+		{
+			assertEquals(0, code, log());
+			assertTrue(log().contains("[self-test] ok the runtime opens the Windows certificate store Windows-ROOT the "
+				+ "way the game does ("), log());
+		}
+		else
+		{
+			assertEquals(SelfTest.EXIT_FAILED, code, log());
+			assertTrue(log().contains("[self-test] FAIL the runtime can't open the Windows certificate store "
+				+ "Windows-ROOT, which the game reads its trust roots from at every start, so no game would start: "),
+				log());
+			assertTrue(log().contains("(the runtime was linked without jdk.crypto.mscapi)"), log());
+			assertTrue(log().contains("[self-test] FAILED: 2 step(s): no java at "), log());
+		}
+		assertFalse(log().contains("not Windows, so"), log());
+		assertEquals(typeBefore, System.getProperty(SelfTest.TRUST_STORE_TYPE), "the property is restored");
 	}
 
 	@Test
