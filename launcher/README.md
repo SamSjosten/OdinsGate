@@ -312,9 +312,13 @@ installers, then the manifest and its `.sig` last, and only then publishes it as
      stopped at `verify` with "no release keys are built into this launcher yet".
   4. `.github/CODEOWNERS` names Sam for `.github/workflows/`, so a change to the release path asks for his review.
 - The launcher lived in the server's repository until 2026-10-30, and its releases up to 1.0.1 (v1.0.0, v1.0.1) are
-  there. From 1.0.2 the releases are this repository's: `Updater.RELEASES` and the download page point here, and a
-  launcher installed from the server repository's releases comes over through a bridge release, the same 1.0.2
-  published there last, which updates it to jars that read this repository's manifest.
+  there. From 1.0.2 the releases are this repository's: `Updater.RELEASES` and the download page point here. A
+  launcher installed from the server repository's releases cannot move over by itself: the installed shell is what
+  checks for updates, against the repository built into it, and a downloaded version runs with `--manifest` and
+  checks nothing. So the server repository's last launcher release (1.0.2 there) raises `minBootstrapVersion` above
+  every shell installed from it, which then shows "Please download the new installer." and its download page, whose
+  buttons lead to this repository's installers. After the server repository goes private, a launcher that never
+  reinstalled keeps running its last accepted version and gets no update, so Sam tells those friends himself.
 - A release that turns out broken ships again as a new, higher version: the updater never downgrades. A fix to the
   runtime (1.0.1, 2026-10-30: the Windows certificate store module) also raises `min-bootstrap-version.txt` to the
   new version, since the self-update replaces jars and never the runtime: every older launcher then shows "Please

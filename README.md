@@ -17,6 +17,7 @@ https://samsjosten.github.io/OdinsGate/, and the installer for their system.
 
 The game server, its deploy and its test tooling live in a private repository of their own. The launcher moved here
 from it on 2026-10-30 with its history; its releases up to 1.0.1 were published there, and from 1.0.2 they are
-published here.
+published here. A launcher installed from there moves over by a reinstall from this repository's page: the installed
+shell checks the repository built into it, so no self-update can bring it here (`launcher/README.md`, "Releases").
 
 `CONTRIBUTING.md` says how changes move; `AGENTS.md` is the review guide.
