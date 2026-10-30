@@ -4,6 +4,9 @@ on:
   push:
     branches: [master, main]
   pull_request:
+  # automerge.yml starts this on a pull request's branch after merging main into it: GitHub runs no workflow for a
+  # push made with a workflow's own token.
+  workflow_dispatch:
 
 jobs:
   build:
@@ -37,14 +40,16 @@ jobs:
 
   # The launcher's version file against the pull request (.github/scripts/launcher-version.js): a change to the pin
   # table or the server's modulus bumps it, and a bump is newer than the last and not released yet.
+  # Also on automerge.yml's dispatched runs, against main: merging main in can drop a pull request's bump when main
+  # took the same version.
   launcher-version:
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - run: node .github/scripts/launcher-version.js "origin/${{ github.base_ref }}" HEAD
+      - run: node .github/scripts/launcher-version.js "origin/${{ github.base_ref || 'main' }}" HEAD
 
   launcher:
     runs-on: ubuntu-latest
