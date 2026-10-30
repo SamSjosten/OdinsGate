@@ -49,6 +49,18 @@ public class LoaderTest
 		PROPERTIES.forEach(System::clearProperty);
 	}
 
+	/**
+	 * The loader the started thread runs on holds the jars open; closed here, once the fake main returned, or
+	 * Windows won't let the temp folder go. A real child JVM exits instead.
+	 */
+	private static void closeLoaderOf(Thread thread) throws IOException
+	{
+		if (thread.getContextClassLoader() instanceof PatchingClassLoader loader)
+		{
+			loader.close();
+		}
+	}
+
 	/** A start installs the guard as this JVM's selector; the other tests' loopback servers need the one before. */
 	@BeforeEach
 	public void keepTheSelector()
@@ -127,6 +139,7 @@ public class LoaderTest
 			FakeClient.MAIN.replace('/', '.'), List.of("--jav_config", "http://odinsgate.net:43595/x.ws"));
 		Thread thread = Loader.start(options, log, failures::add);
 		thread.join(30_000);
+		closeLoaderOf(thread);
 		assertFalse(thread.isAlive(), "the fake main returned");
 		assertTrue(failures.isEmpty(), failures.toString());
 		assertTrue(ProxySelector.getDefault() instanceof ConnectGuard, "the guard is the JVM's selector");
@@ -164,6 +177,7 @@ public class LoaderTest
 			FakeClient.THROWING_MAIN.replace('/', '.'), List.of("--one"));
 		Thread thread = Loader.start(options, log, failures::add);
 		thread.join(30_000);
+		closeLoaderOf(thread);
 		assertEquals(1, failures.size(), failures.toString());
 		assertTrue(failures.get(0) instanceof IllegalStateException, failures.get(0).toString());
 		assertEquals("the fake client refused to start", failures.get(0).getMessage());

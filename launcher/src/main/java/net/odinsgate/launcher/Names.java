@@ -6,8 +6,8 @@ import java.util.regex.Pattern;
  * Every name a friend can see, in one place so NamesTest can hold them all to the rule: never RuneScape, OSRS,
  * Jagex, -scape or RSPS, in any case. Sam picked the name (2026-10-29): "Odin's Gate" in text, OdinsGate or
  * odinsgate for files and ids. Installers, bundle ids and window titles take their names from here, not from string
- * literals of their own; the Inno Setup script (package/windows/OdinsGate.iss) can't read Java, so NamesTest holds
- * it to these, and ImageScan holds every built app image to {@link #BANNED}.
+ * literals of their own; the Inno Setup script (package/windows/OdinsGate.iss) and package.gradle can't read Java,
+ * so NamesTest holds them to these, and ImageScan holds every built app image to {@link #BANNED}.
  */
 public final class Names
 {
@@ -34,6 +34,12 @@ public final class Names
 
 	/** The Windows installer's file name, the same in every release, so the download page's link never changes. */
 	public static final String WINDOWS_INSTALLER = "OdinsGate-Setup.exe";
+
+	/** The Mac disk image for Apple chips (M1 and newer), the same name in every release. */
+	public static final String MAC_INSTALLER_ARM64 = "OdinsGate-mac-arm64.dmg";
+
+	/** The Mac disk image for Intel Macs, the same name in every release. */
+	public static final String MAC_INSTALLER_X64 = "OdinsGate-mac-x64.dmg";
 
 	private Names()
 	{

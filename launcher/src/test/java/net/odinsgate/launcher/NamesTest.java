@@ -24,7 +24,8 @@ public class NamesTest
 	public void everyFriendVisibleNameIsClean()
 	{
 		for (String name : List.of(Names.APP_NAME, Names.DIR_CAPITALIZED, Names.DIR_LOWERCASE, Names.BUNDLE_ID,
-			Names.VENDOR, Names.IMAGE_NAME, Names.WINDOWS_INSTALLER))
+			Names.VENDOR, Names.IMAGE_NAME, Names.WINDOWS_INSTALLER, Names.MAC_INSTALLER_ARM64,
+			Names.MAC_INSTALLER_X64))
 		{
 			assertFalse(Names.BANNED.matcher(name).find(), name);
 		}
@@ -70,11 +71,25 @@ public class NamesTest
 		assertTrue(script.contains("\nPrivilegesRequired=lowest\n"), "per user, no admin rights");
 	}
 
+	/** package.gradle names the app, its id and the disk images itself (it reads no Java); they must be Names'. */
+	@Test
+	public void thePackagingScriptUsesTheNames() throws IOException
+	{
+		String script = Files.readString(module().resolve("package.gradle"), StandardCharsets.UTF_8);
+		assertTrue(script.contains("def appName = '" + Names.IMAGE_NAME + "'"), "the image's name");
+		assertTrue(script.contains("'--vendor', \"" + Names.VENDOR + "\""), "the vendor");
+		assertTrue(script.contains("'--mac-package-identifier', '" + Names.BUNDLE_ID + "'"), "the bundle id");
+		assertTrue(script.contains("'--mac-package-name', \"" + Names.APP_NAME + "\""), "the Mac app's shown name");
+		assertTrue(Names.APP_NAME.length() <= 16, "jpackage caps the Mac package name at 16 characters");
+		assertTrue(script.contains("'" + Names.MAC_INSTALLER_ARM64 + "'"), "the Apple chip disk image");
+		assertTrue(script.contains("'" + Names.MAC_INSTALLER_X64 + "'"), "the Intel disk image");
+	}
+
 	@Test
 	public void thePackagingFilesHoldNoBannedWord() throws IOException
 	{
-		for (String file : List.of("package/windows/OdinsGate.iss", "package.gradle", "package/allowed-jars.txt",
-			"THIRD-PARTY-NOTICES.txt"))
+		for (String file : List.of("package/windows/OdinsGate.iss", "package/mac/entitlements.plist", "package.gradle",
+			"package/allowed-jars.txt", "THIRD-PARTY-NOTICES.txt"))
 		{
 			String text = Files.readString(module().resolve(file), StandardCharsets.UTF_8);
 			assertFalse(Names.BANNED.matcher(text).find(), file);
