@@ -4,6 +4,8 @@ import java.io.IOException;
 import java.io.PrintStream;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.net.InetSocketAddress;
+import java.net.Socket;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -27,6 +29,9 @@ import javax.swing.UIManager;
  * --allow &lt;host:port&gt;... the endpoints the game may reach: our server's game and HTTP ports
  * --main &lt;class&gt;        RuneLite's main class
  * --                    everything after it is RuneLite's own command line
+ * --self-test           first: no jars, no RuneLite; the guard is set for the --allow endpoints, the first is reached
+ *                       through it, a host that isn't allowed is refused, and {@value #SELF_TEST_OK} is printed
+ *                       ({@link SelfTest}, which starts this child from the bundled runtime)
  * </pre>
  * Exit codes: {@value #EXIT_USAGE} for a bad command line, {@value #EXIT_PATCH} when the pin no longer fits the
  * patches, {@value #EXIT_START} when RuneLite's main method throws. Every line it prints starts with
@@ -35,9 +40,14 @@ import javax.swing.UIManager;
 public final class Loader
 {
 	public static final String RUNELITE_MAIN = "net.runelite.client.RuneLite";
+	public static final String SELF_TEST = "--self-test";
+	public static final String SELF_TEST_OK = "[loader] self-test ok";
+	/** A host no packet should ever leave for (TEST-NET-1, never routed): what the guard must refuse on the spot. */
+	static final String NOWHERE = "192.0.2.1";
 	static final int EXIT_USAGE = 64;
 	static final int EXIT_PATCH = 2;
 	static final int EXIT_START = 3;
+	private static final int SELF_TEST_CONNECT_MILLIS = 5000;
 	private static final Pattern HEX = Pattern.compile("[0-9a-fA-F]+");
 
 	/** The parsed command line. */
@@ -73,6 +83,13 @@ public final class Loader
 		args.add("--main");
 		args.add(mainClass);
 		return List.copyOf(args);
+	}
+
+	/** The arguments of a self-test child: the endpoints the guard allows, as for a game, and no jars. */
+	public static List<String> selfTestArguments(Manifest.Server server)
+	{
+		return List.of(SELF_TEST, "--allow", server.host() + ":" + server.gamePort(),
+			"--allow", server.host() + ":" + server.httpPort());
 	}
 
 	/** Parses the command line; an {@link IllegalArgumentException} says what is wrong with it. */
@@ -121,6 +138,11 @@ public final class Loader
 
 	public static void main(String[] args)
 	{
+		if (args.length > 0 && args[0].equals(SELF_TEST))
+		{
+			System.exit(selfTest(args, System.out));
+			return;
+		}
 		Options options;
 		try
 		{
@@ -146,6 +168,82 @@ public final class Loader
 			System.out.println("[loader] " + e.getMessage());
 			System.exit(EXIT_PATCH);
 		}
+	}
+
+	/**
+	 * The self-test child ({@link SelfTest}): proof that the bundled runtime starts a JVM on this code's jars and
+	 * that the guard works in it. The guard is installed as for a game, the first allowed endpoint (the fake game
+	 * port) is reached through it, and a connection to {@link #NOWHERE} is refused by the guard itself, counted, so
+	 * a guard that wasn't there (and a connect that merely timed out) can't pass. Nothing of RuneLite is loaded.
+	 * Returns the exit code: 0, {@value #EXIT_USAGE} for a bad command line, {@value #EXIT_START} when a step
+	 * failed.
+	 */
+	static int selfTest(String[] args, PrintStream log)
+	{
+		List<String> allowed = new ArrayList<>();
+		for (int i = 1; i < args.length; i++)
+		{
+			if (args[i].equals("--"))
+			{
+				break;
+			}
+			if (!args[i].equals("--allow") || i + 1 >= args.length)
+			{
+				log.println("[loader] self-test: unknown argument " + args[i] + "; only --allow host:port... is read");
+				return EXIT_USAGE;
+			}
+			try
+			{
+				allowed.add(ConnectGuard.endpoint(args[++i]));
+			}
+			catch (IllegalArgumentException e)
+			{
+				log.println("[loader] self-test: " + e.getMessage());
+				return EXIT_USAGE;
+			}
+		}
+		if (allowed.isEmpty())
+		{
+			log.println("[loader] self-test: at least one --allow host:port is needed");
+			return EXIT_USAGE;
+		}
+		String first = allowed.get(0);
+		int colon = first.lastIndexOf(':');
+		InetSocketAddress target = new InetSocketAddress(first.substring(0, colon),
+			Integer.parseInt(first.substring(colon + 1)));
+		try
+		{
+			ConnectGuard guard = ConnectGuard.install(allowed, log);
+			try (Socket socket = new Socket())
+			{
+				socket.connect(target, SELF_TEST_CONNECT_MILLIS);
+			}
+			log.println("[loader] self-test: reached " + first + " through the guard");
+			try (Socket socket = new Socket())
+			{
+				socket.connect(new InetSocketAddress(NOWHERE, 80), SELF_TEST_CONNECT_MILLIS);
+				log.println("[loader] self-test FAILED: " + NOWHERE + ":80 was not refused");
+				return EXIT_START;
+			}
+			catch (IOException expected)
+			{
+				log.println("[loader] self-test: " + NOWHERE + ":80 refused (" + expected.getMessage() + ")");
+			}
+			if (guard.refusedConnections() != 1)
+			{
+				log.println("[loader] self-test FAILED: the guard refused " + guard.refusedConnections()
+					+ " connection(s), not the one");
+				return EXIT_START;
+			}
+		}
+		catch (IOException e)
+		{
+			log.println("[loader] self-test FAILED: " + e.getMessage());
+			return EXIT_START;
+		}
+		log.println(SELF_TEST_OK + ": java " + System.getProperty("java.version") + " at "
+			+ System.getProperty("java.home"));
+		return 0;
 	}
 
 	/**

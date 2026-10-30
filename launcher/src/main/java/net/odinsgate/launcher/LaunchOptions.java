@@ -22,11 +22,15 @@ import java.util.Map;
  *                                version ({@link Updater})
  * --healthy &lt;file&gt;               the marker to write once this launcher is up (its window shown, or its steps
  *                                under way), which the shell that handed off reads as "not a crash"
+ * --self-test                    checks this installation and stops ({@link SelfTest}): the bundled runtime starts
+ *                                the game's child JVM against a fake server on this machine, and the window opens
+ *                                where there is a display. What CI runs on every built installer; no manifest
+ *                                needed, nothing real dialed
  * </pre>
  * Parsing is all this class does; nothing here touches a file or the network.
  */
 public record LaunchOptions(boolean auto, boolean developerMode, Path home, Path statusFile, ServerOverride server,
-	Path manifest, Path healthy)
+	Path manifest, Path healthy, boolean selfTest)
 {
 	/** {@code --server}'s value: where to dial instead of the manifest's server. */
 	public record ServerOverride(String host, int gamePort, int httpPort)
@@ -34,9 +38,9 @@ public record LaunchOptions(boolean auto, boolean developerMode, Path home, Path
 	}
 
 	public static final String USAGE = "arguments: [--auto] [--dev] [--home <dir>] [--status-file <file>]"
-		+ " [--server host:port[:httpPort]] [--manifest <file>] [--healthy <file>]";
+		+ " [--server host:port[:httpPort]] [--manifest <file>] [--healthy <file>] [--self-test]";
 
-	public static final LaunchOptions NONE = new LaunchOptions(false, false, null, null, null, null, null);
+	public static final LaunchOptions NONE = new LaunchOptions(false, false, null, null, null, null, null, false);
 
 	/** Parses the launcher's arguments; an {@link IllegalArgumentException} names the bad one and gives the usage. */
 	public static LaunchOptions parse(List<String> args)
@@ -48,6 +52,7 @@ public record LaunchOptions(boolean auto, boolean developerMode, Path home, Path
 		ServerOverride server = null;
 		Path manifest = null;
 		Path healthy = null;
+		boolean selfTest = false;
 		for (int i = 0; i < args.size(); i++)
 		{
 			String arg = args.get(i);
@@ -60,10 +65,11 @@ public record LaunchOptions(boolean auto, boolean developerMode, Path home, Path
 				case "--server" -> server = parseServer(value(args, ++i, arg));
 				case "--manifest" -> manifest = path(value(args, ++i, arg));
 				case "--healthy" -> healthy = path(value(args, ++i, arg));
+				case "--self-test" -> selfTest = true;
 				default -> throw new IllegalArgumentException("unknown argument \"" + arg + "\"; " + USAGE);
 			}
 		}
-		return new LaunchOptions(auto, developerMode, home, statusFile, server, manifest, healthy);
+		return new LaunchOptions(auto, developerMode, home, statusFile, server, manifest, healthy, selfTest);
 	}
 
 	/** The server this launch dials: the override when one was given, else the signed one, and always its key. */

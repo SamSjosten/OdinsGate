@@ -172,10 +172,67 @@ The core that later PRs build on; no window or releases yet:
   scheduled task (`test-runner/launch/OdinsGate.cmd`: `--auto --dev`, data under `C:\RSPS\launcher`, the status
   file and a manifest `write-dev-manifest.ps1` makes from the live server), and `start-client.ps1 -Launcher
   [-LauncherVersion 0.1.0]` brings up a logged-in client through it by waiting on the status file; see
-  `test-runner/launch/README.md`. The installer PRs wrap the same `lib/` folder with a bundled runtime.
+  `test-runner/launch/README.md`. The installers (below) wrap the same jars with a bundled runtime.
 
 The spike that proved the patching route on the real jars was PR #113, closed unmerged as planned: nothing of
 RuneLite's or Jagex's enters this repo, in git or in a release.
+
+## Installers
+
+Friends install one file for their system and nothing else: the installer carries its own Java. The pieces are in
+`package.gradle` (applied by `build.gradle`) and `package/`:
+
+- The runtime: `./gradlew -p launcher runtimeImage` runs jlink over the JDK that runs Gradle (CI's Temurin 21) into
+  `build/runtime`, with the modules of a JRE as Adoptium ships one (`java.se` and the JDK's own modules a JRE
+  carries, `jdk.crypto.ec` among them, without which no TLS handshake to GitHub or RuneLite would succeed) less what
+  a game never needs (JFR, the debugger and management agents). It keeps `bin/java`: jpackage's own jlink run strips
+  it, and the game's child JVM is started from it, so the runtime is made here first and jpackage takes it as it is.
+- The app image: `appImage` runs jpackage over installDist's jars and `THIRD-PARTY-NOTICES.txt` into `build/image`.
+  jpackage's launcher puts only the main jar on the class path and follows its `Class-Path`, which `build.gradle`
+  writes, to the rest. On Windows the image is `OdinsGate\` with `OdinsGate.exe`, `app\` (the jars, the notices)
+  and `runtime\`; on Linux `bin/OdinsGate`, `lib/app/` and `lib/runtime/`; on a Mac `OdinsGate.app`. `Main.appDir()`
+  (the parent of the jar's folder) and `Main.thisJvm()` (`java.home`, the runtime) read the same in every layout.
+  The version must be three numbers (`launcher/version.txt`), which jpackage on Windows insists on.
+- `--self-test` (`SelfTest`): what `appImageSelfTest` runs from the image's executable, and what a friend can run to
+  check an installation. Nothing real is dialed: a fake server on loopback stands in for ours. It checks that the
+  runtime has its java, that the server check (on the runtime's HTTP client) finds the fake server ready, that the
+  game's command line exactly as `ClientCommand` builds it starts a child JVM from that java on this code's jars
+  (`Loader --self-test`: the connect guard set, the fake game port reached through it, `192.0.2.1:80` refused by the
+  guard itself and counted, so a guard that isn't there can't pass), and, where there is a display, that the window
+  opens titled Odin's Gate and closes. Each step is `[self-test] ok` or `FAIL` in the launcher's log; exit 0 or 70.
+  Its files go under `<data>/self-test/`.
+- The scan (`ImageScan`): `appImageScan` runs it from the image's own runtime and jar over the image: no name a
+  friend sees is banned (`Names.BANNED`); no file in the image and no entry in any jar is named like a client
+  (`injected-client*`, `client-*.jar`, `gamepack*`), a cache file (`*.dat2`, `*.idx*`) or the client's signature
+  (`JAGEXLTD.*`), and no jar holds a class under `net/runelite` or in the default package; outside the runtime the
+  one `odinsgate-launcher-*.jar` holds only `net/odinsgate` classes and every other jar is on
+  `package/allowed-jars.txt` at the SHA-256 it was allowed at (a new or bumped dependency is a line there and its
+  notice in `THIRD-PARTY-NOTICES.txt`); the runtime has `bin/java` and `legal/java.base` (OpenJDK's own notices);
+  and the notices name RuneLite, RSProx and every allowed library. One `ok` or `FAIL` line per check; exit 0 or 1.
+- Windows: `windowsInstaller` runs Inno Setup (`package/windows/OdinsGate.iss`; at its usual place on the GitHub
+  runner, elsewhere `-Piscc=<ISCC.exe>`) around the image into `build/installer/OdinsGate-Setup.exe`, the same name
+  in every release so the download page's link never changes. It installs per user with no admin rights under
+  `%LOCALAPPDATA%\Programs\OdinsGate`, with a Start menu entry, an optional desktop icon and an uninstaller, and
+  offers to start the launcher at the end; a launcher still open is asked to close first. The launcher's own data
+  (`%LOCALAPPDATA%\OdinsGate`) is left alone by the uninstaller. Unsigned until PR 20: the browser's "Keep" and
+  "Windows protected your PC" (More info, Run anyway) are what a friend sees, and Smart App Control blocks it
+  outright. No icon yet: jpackage's default Java one, until someone draws Odin's Gate one.
+- CI (`.github/actions/windows-installer`, run by build.yml's `installer-windows` job on every pull request and by
+  release.yml's `windows` job): the tasks above on windows-latest, then the installer itself: installed silently,
+  the installed launcher's `--self-test` run and its log printed, and uninstalled again. build.yml uploads the
+  installer as the `OdinsGate-Setup` artifact, which is what a test VM installs; a release carries it as an asset.
+  The unit tests run in the `launcher` (Linux) and `launcher-windows` jobs, not here; the Windows run is where
+  friends' launchers live, and what caught the tests that assumed `\n` after println, `/absolute` paths and a temp
+  folder deletable while a class loader still held a jar in it.
+- Tests: `SelfTestTest` runs the self-test on the test JVM (a JDK, so the real child JVM starts) and sees each
+  failure once, `ImageScanTest` scans a made-up image with one thing spoiled per test, `NamesTest` holds the Inno
+  Setup script, `package.gradle`, the allowed list and the notices to the names rule, and `LoaderTest` runs the
+  self-test child in this JVM. On Linux, `appImageSelfTest appImageScan` build and prove the whole image here, bar
+  the installer.
+
+Not yet: a Mac and a Linux build (PRs 18 and 19), signing (PR 20), `SHA256SUMS` over the installers (with the
+signing PR), the test VMs running the client through an installed launcher instead of installDist's layout, and a
+manifest bundled in the image for a first start with no internet (the first start fetches RuneLite anyway).
 
 ## Releases
 
@@ -187,9 +244,10 @@ release tool, `net.odinsgate.launcher.Release`: every jar under `lib/` with its 
 installed shell that can still run the release (bumped only when the hand-off between shell and version changes).
 The `publish` job, which only a push to `main` or a run by hand without `dry_run` reaches, signs the manifest with
 the key in the `release` Environment, checks the signature against the keys built into `TrustedKeys` (a key no
-installed launcher trusts publishes nothing), makes a draft release `v<version>`, uploads the jars, then the manifest
-and its `.sig` last, and only then publishes it as the latest: `releases/latest/download/manifest.json` is what
-every installed launcher fetches (`Updater`), and `releases/download/v<version>/<jar>` is where each file is.
+installed launcher trusts publishes nothing), makes a draft release `v<version>`, uploads the jars and the Windows
+installer, then the manifest and its `.sig` last, and only then publishes it as the latest:
+`releases/latest/download/manifest.json` is what every installed launcher fetches (`Updater`), and
+`releases/download/v<version>/<jar>` is where each file is.
 
 - Dry runs: a pull request that touches the release path (`version.txt`, `min-bootstrap-version.txt`,
   `build.gradle`, `Release.java`, the workflow), and **Run workflow** with `dry_run` on, do the same build, sign with

@@ -49,17 +49,31 @@ public class LaunchOptionsTest
 			"--manifest", "/vm/launcher/manifest.json"));
 		assertTrue(options.auto());
 		assertTrue(options.developerMode());
-		assertEquals(Path.of("/vm/launcher"), options.home());
-		assertEquals(Path.of("/vm/launcher/status.json"), options.statusFile());
-		assertEquals(Path.of("/vm/launcher/manifest.json"), options.manifest());
+		// Absolute on Linux as written; on Windows the options make it absolute on the current drive, as a friend's
+		// relative path would be.
+		Path home = Path.of("/vm/launcher").toAbsolutePath();
+		assertEquals(home, options.home());
+		assertEquals(home.resolve("status.json"), options.statusFile());
+		assertEquals(home.resolve("manifest.json"), options.manifest());
 		assertEquals(new LaunchOptions.ServerOverride("staging.odinsgate.net", 44594, 44595), options.server());
-		assertEquals(Path.of("/vm/launcher"), options.dataDir(LINUX, Map.of(), HOME), "--home wins over the system");
+		assertEquals(home, options.dataDir(LINUX, Map.of(), HOME), "--home wins over the system");
 
 		Manifest.Server server = options.launchServer(SIGNED);
 		assertEquals("staging.odinsgate.net", server.host());
 		assertEquals(44594, server.gamePort());
 		assertEquals(44595, server.httpPort(), "the HTTP port is the game port plus one, as our server pairs them");
 		assertEquals(SIGNED.modulus(), server.modulus(), "the key is always the manifest's");
+	}
+
+	@Test
+	public void theSelfTestIsAFlagAndNeedsNothingElse()
+	{
+		assertTrue(LaunchOptions.parse(List.of("--self-test")).selfTest());
+		assertFalse(LaunchOptions.NONE.selfTest());
+		assertFalse(LaunchOptions.parse(List.of("--auto")).selfTest());
+		LaunchOptions both = LaunchOptions.parse(List.of("--self-test", "--home", "x"));
+		assertTrue(both.selfTest() && both.home() != null);
+		assertTrue(LaunchOptions.USAGE.contains("[--self-test]"));
 	}
 
 	@Test
