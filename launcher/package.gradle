@@ -8,6 +8,7 @@ import javax.inject.Inject
 def hostOs = System.getProperty('os.name').toLowerCase(Locale.ROOT)
 def onWindows = hostOs.contains('win')
 def onMac = hostOs.contains('mac')
+def onLinux = hostOs.contains('linux')
 def jdk = System.getProperty('java.home')
 def exeSuffix = onWindows ? '.exe' : ''
 def appName = 'OdinsGate'
@@ -229,6 +230,28 @@ tasks.register('macDmg', MacDmg) {
 	it.producedName = "${appName}-${bundleVersion}.dmg"
 	it.dmgName = chip == 'arm64' ? 'OdinsGate-mac-arm64.dmg' : 'OdinsGate-mac-x64.dmg'
 	it.dest = layout.buildDirectory.dir('installer')
+}
+
+// The Linux archive, OdinsGate-linux-x64.tar.gz (or -arm64) in build/installer: the app image as it is, under one
+// OdinsGate/ folder with its executable bits kept, so a friend extracts it anywhere and runs OdinsGate/bin/OdinsGate.
+// No deb or rpm: either needs root to install, and the folder needs nothing.
+tasks.register('linuxTarball', Tar) {
+	group = 'distribution'
+	description = 'The Linux tar.gz around the app image (Linux only, for its own chip).'
+	dependsOn 'appImage'
+	onlyIf('a tar.gz is made on Linux') { onLinux }
+	from(imageDir) {
+		into appName
+		// Gradle's archive doesn't carry the source files' modes: the executables, bin/OdinsGate and the runtime's
+		// bin/java among them, get theirs back, so a friend runs the launcher with no chmod first.
+		eachFile { details ->
+			details.permissions { it.unix(details.file.canExecute() ? 0755 : 0644) }
+		}
+	}
+	archiveFileName = chip == 'arm64' ? 'OdinsGate-linux-arm64.tar.gz' : 'OdinsGate-linux-x64.tar.gz'
+	destinationDirectory = layout.buildDirectory.dir('installer')
+	compression = Compression.GZIP
+	reproducibleFileOrder = true
 }
 
 // The per-user installer around the image, OdinsGate-Setup.exe in build/installer, made with Inno Setup

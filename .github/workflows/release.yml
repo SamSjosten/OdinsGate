@@ -23,6 +23,7 @@ on:
       - launcher/THIRD-PARTY-NOTICES.txt
       - .github/actions/windows-installer/action.yml
       - .github/actions/mac-installer/action.yml
+      - .github/actions/linux-tarball/action.yml
       - .github/workflows/release.yml
   workflow_dispatch:
     inputs:
@@ -142,8 +143,21 @@ jobs:
           path: launcher/build/installer/OdinsGate-mac-${{ matrix.chip }}.dmg
           if-no-files-found: error
 
+  # The Linux archive, self-tested from a copy extracted out of it under a virtual display.
+  linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/linux-tarball
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installer-linux
+          path: launcher/build/installer/OdinsGate-linux-x64.tar.gz
+          if-no-files-found: error
+
   publish:
-    needs: [build, windows, mac]
+    needs: [build, windows, mac, linux]
     if: needs.build.outputs.publish == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -163,7 +177,7 @@ jobs:
         with:
           name: release-files
           path: dist
-      # Every installer-* artifact (Windows, the two Mac chips) into one folder.
+      # Every installer-* artifact (Windows, the two Mac chips, Linux) into one folder.
       - uses: actions/download-artifact@v4
         with:
           pattern: installer-*
@@ -189,7 +203,7 @@ jobs:
         run: |
           notes="Odin's Gate launcher $VERSION. Installed launchers update themselves from this release's manifest;"
           notes="$notes OdinsGate-Setup.exe is the Windows installer; OdinsGate-mac-arm64.dmg (Apple chip) and"
-          notes="$notes OdinsGate-mac-x64.dmg (Intel) are the Mac ones."
+          notes="$notes OdinsGate-mac-x64.dmg (Intel) are the Mac ones; OdinsGate-linux-x64.tar.gz is the Linux one."
           gh release create "v$VERSION" --draft --target "$GITHUB_SHA" --title "Odin's Gate launcher $VERSION" \
             --notes "$notes"
           ls -la installers

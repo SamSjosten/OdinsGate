@@ -234,23 +234,32 @@ Friends install one file for their system and nothing else: the installer carrie
   Security, Open Anyway, and a "damaged" message means the quarantine flag has to go (`xattr -d
   com.apple.quarantine`). The Intel build stops when no friend has an Intel Mac (GitHub retires those runners in
   2027).
-- CI (`.github/actions/windows-installer` and `mac-installer`, run by build.yml's `installer-windows` and
-  `installer-mac` jobs on every pull request, macos-latest for Apple chips and macos-15-intel for Intel, and by
-  release.yml's `windows` and `mac` jobs): the tasks above, then the installer itself. On Windows it is installed
-  silently, the installed launcher's `--self-test` run and its log printed, and uninstalled again; on a Mac the
-  disk image is opened, the app copied to Applications, its `--self-test` run and the copy removed. build.yml
-  uploads the installer as the `OdinsGate-Setup` artifact, which is what a test VM installs, and the disk images as
-  `OdinsGate-mac-arm64` and `OdinsGate-mac-x64`; a release carries all three as assets.
+- Linux: `linuxTarball` wraps the same app image, under one `OdinsGate/` folder, executable bits kept, into
+  `build/installer/OdinsGate-linux-x64.tar.gz` (`-arm64` on an arm64 machine; CI builds the x64 one only), the
+  same name in every release. A friend extracts it anywhere and runs `OdinsGate/bin/OdinsGate`: nothing is
+  installed, no root is needed, and removing the folder removes it; the launcher's own data is under
+  `$XDG_DATA_HOME/odinsgate` (`~/.local/share/odinsgate`). No deb or rpm, since either needs root to install.
+  Nothing on Linux checks a signature, so there is no first-run prompt to get past.
+- CI (`.github/actions/windows-installer`, `mac-installer` and `linux-tarball`, run by build.yml's
+  `installer-windows`, `installer-mac` and `installer-linux` jobs on every pull request, macos-latest for Apple
+  chips, macos-15-intel for Intel and ubuntu-latest for Linux, and by release.yml's `windows`, `mac` and `linux`
+  jobs): the tasks above, then the installer itself. On Windows it is installed silently, the installed launcher's
+  `--self-test` run and its log printed, and uninstalled again; on a Mac the disk image is opened, the app copied
+  to Applications, its `--self-test` run and the copy removed; on Linux the archive is extracted and the extracted
+  launcher's `--self-test` run under xvfb, a virtual display, so the window step, which a runner without a display
+  skips, is proven there (the log must say the window opened). build.yml uploads the installer as the
+  `OdinsGate-Setup` artifact, which is what a test VM installs, the disk images as `OdinsGate-mac-arm64` and
+  `OdinsGate-mac-x64` and the archive as `OdinsGate-linux-x64`; a release carries all four as assets.
   The unit tests run in the `launcher` (Linux) and `launcher-windows` jobs, not here; the Windows run is where
   friends' launchers live, and what caught the tests that assumed `\n` after println, `/absolute` paths and a temp
   folder deletable while a class loader still held a jar in it.
 - Tests: `SelfTestTest` runs the self-test on the test JVM (a JDK, so the real child JVM starts) and sees each
   failure once, `ImageScanTest` scans a made-up image with one thing spoiled per test, `NamesTest` holds the Inno
   Setup script, `package.gradle`, the allowed list and the notices to the names rule, and `LoaderTest` runs the
-  self-test child in this JVM. On Linux, `appImageSelfTest appImageScan` build and prove the whole image here, bar
-  the installer.
+  self-test child in this JVM. On Linux, `appImageSelfTest appImageScan linuxTarball` build and prove the whole
+  image and its archive here; CI adds the run from the extracted copy.
 
-Not yet: a Linux build (PR 19), signing (PR 20), `SHA256SUMS` over the installers (with the signing PR), a Mac
+Not yet: signing (PR 20), `SHA256SUMS` over the installers (with the signing PR), a Mac
 run of the real client (PR 21), the test VMs running the client through an installed launcher instead of
 installDist's layout, and a manifest bundled in the image for a first start with no internet (the first start
 fetches RuneLite anyway).
