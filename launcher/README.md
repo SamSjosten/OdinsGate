@@ -72,11 +72,12 @@ The core that later PRs build on; no window or releases yet:
   `Loader` is the child JVM's entry point: given the jars, key, port and main class it runs the preflight scan,
   refuses with every gap named (exit 2), or loads RuneLite through the patching loader and calls its main method on
   a thread of its own, the context class loader set so Swing and plugins find RuneLite's classes. It also takes
-  `--allow host:port` for each endpoint the game may reach (our server's game and HTTP ports, which `Launch`
-  passes) and installs `ConnectGuard` before the first RuneLite class loads.
-- `ConnectGuard`: the game reaches our server and nothing else. It is the child JVM's default `ProxySelector`,
-  which every `Socket`, `HttpURLConnection` and `java.net.http` connection in the JVM asks before it connects,
-  so a host is never even resolved unless it is allowed. The allowed endpoints and loopback (RuneLite's own
+  `--allow host:port` for each endpoint the game may reach (our server's game and HTTP ports, and RuneLite's
+  Plugin Hub `repo.runelite.net:443` and static data `static.runelite.net:443`, which `Launch` passes) and
+  installs `ConnectGuard` before the first RuneLite class loads.
+- `ConnectGuard`: the game reaches our server and RuneLite's own Plugin Hub and static data, and nothing else
+  (no Jagex host, no Wiki). It is the child JVM's default `ProxySelector`, which every `Socket`,
+  `HttpURLConnection` and `java.net.http` connection in the JVM asks before it connects, so a host is never even resolved unless it is allowed. The allowed endpoints and loopback (RuneLite's own
   local sockets) get a direct connection; everything else is sent to a proxy that is a loopback socket of ours
   which accepts and closes at once, so the attempt fails on the spot instead of reaching the network. An
   allowed name is also allowed by its resolved addresses, but only while it still resolves to them: the names
