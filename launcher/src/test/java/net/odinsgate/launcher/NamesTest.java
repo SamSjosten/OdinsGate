@@ -25,7 +25,7 @@ public class NamesTest
 	{
 		for (String name : List.of(Names.APP_NAME, Names.DIR_CAPITALIZED, Names.DIR_LOWERCASE, Names.BUNDLE_ID,
 			Names.VENDOR, Names.IMAGE_NAME, Names.WINDOWS_INSTALLER, Names.MAC_INSTALLER_ARM64,
-			Names.MAC_INSTALLER_X64))
+			Names.MAC_INSTALLER_X64, Names.LINUX_INSTALLER_X64))
 		{
 			assertFalse(Names.BANNED.matcher(name).find(), name);
 		}
@@ -71,7 +71,7 @@ public class NamesTest
 		assertTrue(script.contains("\nPrivilegesRequired=lowest\n"), "per user, no admin rights");
 	}
 
-	/** package.gradle names the app, its id and the disk images itself (it reads no Java); they must be Names'. */
+	/** package.gradle names the app, its id, the disk images and the archives itself (it reads no Java): Names'. */
 	@Test
 	public void thePackagingScriptUsesTheNames() throws IOException
 	{
@@ -83,6 +83,7 @@ public class NamesTest
 		assertTrue(Names.APP_NAME.length() <= 16, "jpackage caps the Mac package name at 16 characters");
 		assertTrue(script.contains("'" + Names.MAC_INSTALLER_ARM64 + "'"), "the Apple chip disk image");
 		assertTrue(script.contains("'" + Names.MAC_INSTALLER_X64 + "'"), "the Intel disk image");
+		assertTrue(script.contains("'" + Names.LINUX_INSTALLER_X64 + "'"), "the Linux archive");
 	}
 
 	@Test
