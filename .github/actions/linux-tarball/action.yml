@@ -1,0 +1,55 @@
+name: Linux archive
+description: >-
+  Builds the Odin's Gate app image and its tar.gz on a Linux runner, for the runner's own chip
+  (launcher/package.gradle), runs the image's --self-test and the image scan, then extracts the archive as a friend
+  would and runs the extracted launcher's --self-test under a virtual display (xvfb), so its window opens on the
+  runner too. The archive is left at launcher/build/installer/OdinsGate-linux-<chip>.tar.gz for the caller to upload
+  (launcher/README.md, "Installers").
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-java@v4
+      with:
+        distribution: temurin
+        java-version: "21"
+    - uses: gradle/actions/setup-gradle@v4
+    # Not `build`: the unit tests run in build.yml's launcher jobs. What is checked here is the image and the
+    # archive, from the real executable.
+    - name: The app image, its self-test and scan, and the archive
+      shell: bash
+      run: ./gradlew -p launcher appImageSelfTest appImageScan linuxTarball
+    # The runner has no display, and the window is the one step the self-test skips without one: a virtual display
+    # for the extracted launcher's run, and a font for Swing to draw the title with.
+    - name: A virtual display
+      shell: bash
+      run: |
+        set -euo pipefail
+        if ! command -v xvfb-run >/dev/null; then
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq xvfb fonts-dejavu-core
+        fi
+    - name: Extract the archive, self-test the extracted launcher with its window, remove it
+      shell: bash
+      run: |
+        set -euo pipefail
+        archive=$(ls launcher/build/installer/OdinsGate-linux-*.tar.gz)
+        echo "$archive is $(du -m "$archive" | cut -f1) MB"
+        extracted="$RUNNER_TEMP/odinsgate-linux"
+        rm -rf "$extracted"
+        mkdir -p "$extracted"
+        tar -xzf "$archive" -C "$extracted"
+        ls -la "$extracted/OdinsGate" "$extracted/OdinsGate/bin"
+        # As a friend runs it, with no chmod: the archive carries the executable bits or this fails.
+        data="$RUNNER_TEMP/odinsgate-extracted-self-test"
+        code=0
+        xvfb-run -a "$extracted/OdinsGate/bin/OdinsGate" --self-test --home "$data" || code=$?
+        if [[ $code -ne 0 ]]; then
+          echo "the extracted launcher's self-test exited with $code"
+          exit "$code"
+        fi
+        if ! grep -q 'the window opened as' "$data/logs/launcher.log"; then
+          echo 'the window never opened under the virtual display'
+          exit 1
+        fi
+        rm -rf "$extracted"
+        echo 'extracted, self-tested with the window open, and removed'

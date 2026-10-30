@@ -1,0 +1,215 @@
+name: release
+# Publishes a launcher release when a merge to main changes launcher/version.txt (launcher/README.md, "Releases"):
+# builds the jars and the installers, writes the manifest with the launcher's own release tool
+# (net.odinsgate.launcher.Release), makes a draft release v<version>, uploads the jars and the installers, then the
+# manifest and its signature last, and only then publishes it, so releases/latest/download never points at a
+# half-uploaded release. The signing key lives only in the `release`
+# Environment, which has Sam as its required reviewer: one click per release, and no pull request run ever sees it.
+# A pull request that touches the release path, or a run by hand with dry_run, does the same build and signs with a
+# throwaway key made in the run, and publishes nothing.
+on:
+  push:
+    branches: [main]
+    paths:
+      - launcher/version.txt
+  pull_request:
+    paths:
+      - launcher/version.txt
+      - launcher/min-bootstrap-version.txt
+      - launcher/runelite-pins.json
+      - launcher/rsa-modulus.txt
+      - launcher/build.gradle
+      - launcher/src/main/java/net/odinsgate/launcher/Release.java
+      - launcher/package.gradle
+      - launcher/package/**
+      - launcher/THIRD-PARTY-NOTICES.txt
+      - .github/actions/windows-installer/action.yml
+      - .github/actions/mac-installer/action.yml
+      - .github/actions/linux-tarball/action.yml
+      - .github/workflows/release.yml
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Build and sign with a throwaway key, publish nothing
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+env:
+  TOOL: net.odinsgate.launcher.Release
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      publish: ${{ steps.version.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: gradle/actions/setup-gradle@v4
+      - id: version
+        # A push to main, or a run by hand without dry_run, publishes; anything else is a dry run.
+        shell: bash
+        run: |
+          version=$(tr -d '[:space:]' < launcher/version.txt)
+          if [[ ! $version =~ ^[0-9]+(\.[0-9]+)*$ ]]; then
+            echo "launcher/version.txt says \"$version\", not dotted digits"
+            exit 1
+          fi
+          publish=false
+          dry_run='${{ inputs.dry_run }}'
+          if [[ $GITHUB_EVENT_NAME == push ]]; then
+            publish=true
+          elif [[ $GITHUB_EVENT_NAME == workflow_dispatch && $dry_run == false ]]; then
+            publish=true
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "publish=$publish" >> "$GITHUB_OUTPUT"
+          echo "Launcher version $version, publish=$publish"
+      - name: The version isn't released yet
+        if: steps.version.outputs.publish == 'true'
+        shell: bash
+        run: |
+          if git ls-remote --exit-code --tags origin "refs/tags/v${{ steps.version.outputs.version }}" >/dev/null; then
+            echo "v${{ steps.version.outputs.version }} is released already; bump launcher/version.txt"
+            exit 1
+          fi
+      - run: ./gradlew -p launcher build
+      - name: The release files and their manifest
+        shell: bash
+        run: |
+          mkdir dist
+          cp launcher/build/install/odinsgate-launcher/lib/*.jar dist/
+          java -cp 'launcher/build/install/odinsgate-launcher/lib/*' "$TOOL" manifest \
+            --version "${{ steps.version.outputs.version }}" \
+            --min-bootstrap "$(tr -d '[:space:]' < launcher/min-bootstrap-version.txt)" \
+            --lib dist --pins launcher/runelite-pins.json --modulus launcher/rsa-modulus.txt \
+            --out dist/manifest.json
+      - name: Dry run, a throwaway key made here signs and verifies the manifest
+        if: steps.version.outputs.publish != 'true'
+        shell: bash
+        run: |
+          openssl genpkey -algorithm ed25519 -out throwaway.pem
+          java -cp 'dist/*' "$TOOL" sign --key throwaway.pem --manifest dist/manifest.json --out dist/manifest.json.sig
+          java -cp 'dist/*' "$TOOL" verify --manifest dist/manifest.json --signature dist/manifest.json.sig \
+            --key "$(openssl pkey -in throwaway.pem -pubout -outform DER | base64 -w0)"
+          rm throwaway.pem dist/manifest.json.sig
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-files
+          path: dist/
+          if-no-files-found: error
+
+  # The Windows installer, self-tested on the runner before and after an install (launcher/README.md, "Installers").
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/windows-installer
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installer-windows
+          path: launcher/build/installer/OdinsGate-Setup.exe
+          if-no-files-found: error
+
+  # The Mac disk images, one per chip, each self-tested from a copy of the app out of the disk image.
+  mac:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            chip: arm64
+          - os: macos-15-intel
+            chip: x64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/mac-installer
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installer-mac-${{ matrix.chip }}
+          path: launcher/build/installer/OdinsGate-mac-${{ matrix.chip }}.dmg
+          if-no-files-found: error
+
+  # The Linux archive, self-tested from a copy extracted out of it under a virtual display.
+  linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/linux-tarball
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installer-linux
+          path: launcher/build/installer/OdinsGate-linux-x64.tar.gz
+          if-no-files-found: error
+
+  publish:
+    needs: [build, windows, mac, linux]
+    if: needs.build.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # The Environment holds RELEASE_SIGNING_KEY (the Ed25519 private key, PKCS#8 PEM) and waits for Sam's approval.
+    environment: release
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-files
+          path: dist
+      # Every installer-* artifact (Windows, the two Mac chips, Linux) into one folder.
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: installer-*
+          merge-multiple: true
+          path: installers
+      - name: Sign with the release key and check it against the keys launchers trust
+        shell: bash
+        env:
+          RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
+        run: |
+          [[ -n $RELEASE_SIGNING_KEY ]] || { echo "the release Environment has no RELEASE_SIGNING_KEY secret"; exit 1; }
+          umask 077
+          printf '%s\n' "$RELEASE_SIGNING_KEY" > release.pem
+          java -cp 'dist/*' "$TOOL" sign --key release.pem --manifest dist/manifest.json --out dist/manifest.json.sig
+          rm -f release.pem
+          # Without --key: the keys built into this build's TrustedKeys. A manifest they don't verify is one no
+          # installed launcher would take, so nothing is published.
+          java -cp 'dist/*' "$TOOL" verify --manifest dist/manifest.json --signature dist/manifest.json.sig
+      - name: Draft release, the jars and the installers, then the manifest and its signature, then publish
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          notes="Odin's Gate launcher $VERSION. Installed launchers update themselves from this release's manifest;"
+          notes="$notes OdinsGate-Setup.exe is the Windows installer; OdinsGate-mac-arm64.dmg (Apple chip) and"
+          notes="$notes OdinsGate-mac-x64.dmg (Intel) are the Mac ones; OdinsGate-linux-x64.tar.gz is the Linux one."
+          gh release create "v$VERSION" --draft --target "$GITHUB_SHA" --title "Odin's Gate launcher $VERSION" \
+            --notes "$notes"
+          ls -la installers
+          gh release upload "v$VERSION" dist/*.jar installers/*
+          gh release upload "v$VERSION" dist/manifest.json dist/manifest.json.sig
+          gh release edit "v$VERSION" --draft=false --latest
+          echo "Published https://github.com/$GITHUB_REPOSITORY/releases/tag/v$VERSION"

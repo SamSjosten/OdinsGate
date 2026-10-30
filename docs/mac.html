@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Odin's Gate on a Mac</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main>
+<nav><a href="index.html">Odin's Gate</a> &rsaquo; Mac</nav>
+<h1>Mac</h1>
+
+<h2>Which download</h2>
+<p>Apple menu &gt; About This Mac &gt; Chip. "Apple M1", "M2", "M3" and so on:
+<a href="https://github.com/SamSjosten/OdinsGate/releases/latest/download/OdinsGate-mac-arm64.dmg">OdinsGate-mac-arm64.dmg</a>.
+"Intel Core": <a href="https://github.com/SamSjosten/OdinsGate/releases/latest/download/OdinsGate-mac-x64.dmg">OdinsGate-mac-x64.dmg</a>.
+The Apple-chip build doesn't open on an Intel Mac, and the Intel build runs slowly on an Apple chip.</p>
+
+<h2>Install</h2>
+<ol>
+<li>Open the disk image and drag <b>Odin's Gate</b> to the Applications folder shown next to it. Eject the disk
+image.</li>
+<li>Open Odin's Gate from Applications. macOS says it "could not verify" the app, because it isn't signed with a paid
+certificate. Press <b>Done</b>.</li>
+<li>Open <b>System Settings</b> &gt; <b>Privacy &amp; Security</b>, scroll down to Security, and press
+<b>Open Anyway</b> next to the line about Odin's Gate. Confirm with your password, then <b>Open</b>. macOS asks
+only this once.</li>
+</ol>
+<p>On macOS 13 or 14 a right-click on the app and <b>Open</b>, then <b>Open</b> again, does the same.</p>
+<p>If macOS says the app "is damaged and can't be opened", the download got a quarantine flag the app can't shed.
+Open Terminal (Spotlight, type Terminal) and run</p>
+<pre><code>xattr -d com.apple.quarantine /Applications/OdinsGate.app</code></pre>
+<p>then open the app again.</p>
+
+<h2>Play</h2>
+<p>Press <b>Play</b>. The first start downloads the game client, about a minute; after that the game is up in
+seconds. Log in with a name and password you make up for this server, never the login of any other game or
+account; the first login with a name claims it.</p>
+
+<h2>Updates</h2>
+<p>The launcher updates itself when Sam publishes a new version. If it ever says "Please download the new installer",
+come back to the <a href="index.html">download page</a>, download the disk image again and replace the app in
+Applications.</p>
+
+<h2>Where its files are, and uninstalling</h2>
+<p>The app is <code>/Applications/OdinsGate.app</code>; its settings and the game client are under
+<code>~/Library/Application Support/OdinsGate</code>. To remove it, drag the app to the Trash and delete that
+folder.</p>
+
+<h2>Problems</h2>
+<p>Press <b>Copy problem report</b> in the launcher and paste it to Sam. It holds the launcher's log and what it
+found out about the server, nothing from the rest of your Mac.</p>
+</main>
+</body>
+</html>

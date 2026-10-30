@@ -1,0 +1,80 @@
+// The Odin's Gate launcher, which friends install instead of RSProx. Its own Gradle build in its own repository,
+// OdinsGate, apart from the game server's, so a launcher change never touches the server and the server's code stays
+// out of public view. The package is net.odinsgate, and nothing a friend can see may contain the banned words
+// (NamesTest).
+plugins {
+	id 'java'
+	// installDist lays the launcher out the way it is installed and run: bin/odinsgate-launcher(.bat) over lib/*.jar.
+	// The test VM runs that layout from C:\RSPS\launcher\app (test-runner/launch/OdinsGate.cmd); the installer PRs
+	// wrap the same lib/ folder with a bundled runtime.
+	id 'application'
+}
+
+repositories {
+	mavenCentral()
+}
+
+dependencies {
+	implementation 'com.google.code.gson:gson:2.13.1'
+	// The loader patches RuneLite's classes as they load; ASM reads and rewrites them. The tests build their own
+	// fake classes with it too, so no RuneLite or Jagex jar is ever in git.
+	implementation 'org.ow2.asm:asm:9.11'
+	implementation 'org.ow2.asm:asm-tree:9.11'
+
+	testImplementation platform('org.junit:junit-bom:5.12.2')
+	testImplementation 'org.junit.jupiter:junit-jupiter'
+	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+group = 'net.odinsgate'
+// The launcher's version is launcher/version.txt, which the release workflow reads too: a merge to main that changes
+// it publishes a release (README, "Releases"). min-bootstrap-version.txt next to it is the oldest installed shell
+// that can still run a new release.
+version = file('version.txt').text.trim()
+
+tasks.withType(JavaCompile).configureEach {
+	options.encoding = 'UTF-8'
+	options.release.set(21)
+}
+
+jar {
+	manifest {
+		// Main-Class is the launcher itself; the child JVM's entry point (Loader) is named on its command line.
+		// Class-Path names the other jars next to this one: jpackage's launcher puts only the main jar on the class
+		// path and follows this to the rest (package.gradle); installDist's scripts list every jar themselves.
+		attributes 'Main-Class': 'net.odinsgate.launcher.Main', 'Implementation-Version': version,
+			'Class-Path': configurations.runtimeClasspath.elements.map { it.collect { f -> f.asFile.name }.join(' ') }
+	}
+}
+
+application {
+	applicationName = 'odinsgate-launcher'
+	mainClass = 'net.odinsgate.launcher.Main'
+}
+
+// build makes the installed layout too (build/install/odinsgate-launcher/), which CI uploads for the test VM.
+assemble.dependsOn installDist
+
+test {
+	useJUnitPlatform()
+	// The window's panel is tested without a display: Swing's lightweight components work headless, a frame doesn't.
+	systemProperty 'java.awt.headless', 'true'
+	// Besides their classes, the tests read this module's packaging files and the pin table (runelite-pins.json, next
+	// to this file): inputs, so CI's build cache never hands back a pass from before a change to them.
+	inputs.files(fileTree(projectDir) { exclude 'build/**', 'src/**', '.gradle/**' }).withPathSensitivity(PathSensitivity.RELATIVE)
+}
+
+// The weekly pin health check (.github/workflows/pin-health.yml): every pin in runelite-pins.json (next to this
+// file; the server keeps a copy of the same table) still verifies, every jar it names answers a HEAD request, and
+// RuneLite's outdated list doesn't name it. HEAD only: no RuneLite jar is ever downloaded or cached by it.
+// -Ppins=<file> checks another table.
+tasks.register('pinHealth', JavaExec) {
+	group = 'verification'
+	description = 'Checks every RuneLite pin against RuneLite\'s servers (HEAD only, no jar is downloaded).'
+	classpath = sourceSets.main.runtimeClasspath
+	mainClass = 'net.odinsgate.launcher.PinHealth'
+	args '--pins', (findProperty('pins') ?: file('runelite-pins.json').path)
+}
+
+// The runtime, the app image, its self-test and scan, and the installers (README.md, "Installers").
+apply from: 'package.gradle'

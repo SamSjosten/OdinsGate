@@ -1,0 +1,8 @@
+# The third-party jars an Odin's Gate app image may carry: each one's SHA-256 (the bytes Maven Central serves) and
+# the name THIRD-PARTY-NOTICES.txt must mention for it. ImageScan holds every built image to this list, so a jar
+# that is neither ours nor here fails the build (launcher/README.md, "Installers"). A new or bumped dependency is a
+# line here and its notice there. Fields: the jar's name, its SHA-256, the library's name in the notices.
+gson-2.13.1.jar 94855942d4992f112946d3de1c334e709237b8126d8130bf07807c018a4a2120 Gson
+error_prone_annotations-2.38.0.jar 6661d5335090a5fc61dd869d2095bc6c1e2156e3aa47a6e4ababdf64c99a7889 Error Prone
+asm-9.11.jar 5fe3b469b8646e5bc53a897840952d63b712d4923d2a7a26aebc585f1fec7676 ASM
+asm-tree-9.11.jar da8ad24d0bf7efb0674a906f59a7d441692b641718371f3bce6762b191a169fd ASM

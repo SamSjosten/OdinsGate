@@ -1,0 +1,275 @@
+// Packaging the launcher for friends (README.md, "Installers"), applied by build.gradle: a jlink runtime that keeps
+// bin/java, jpackage's app image over installDist's jars and the notices, the self-test and the scan run from that
+// image, and the installers around it: Inno Setup on Windows, a disk image on a Mac. Every task uses the JDK that
+// runs Gradle (CI's Temurin 21), so the bundled runtime is that JDK's, and a Mac build is for the chip it runs on
+// (jpackage makes no universal app; Apple chips need the arm64 build for RuneLite's natives).
+import javax.inject.Inject
+
+def hostOs = System.getProperty('os.name').toLowerCase(Locale.ROOT)
+def onWindows = hostOs.contains('win')
+def onMac = hostOs.contains('mac')
+def onLinux = hostOs.contains('linux')
+def jdk = System.getProperty('java.home')
+def exeSuffix = onWindows ? '.exe' : ''
+def appName = 'OdinsGate'
+// The chip this build is for, as the disk images are named: arm64 (Apple chips) or x64 (Intel).
+def chip = System.getProperty('os.arch').toLowerCase(Locale.ROOT).matches('aarch64|arm64') ? 'arm64' : 'x64'
+// The version the bundle carries. macOS wants one whose first number is above zero (jpackage refuses 0.x.y there),
+// so a launcher still at 0.x.y is bundled as 1.x.y on a Mac: the shell's version, what Finder shows for the app.
+// The launcher's own version (its window, the status file, the manifest) is the jar's and stays as it is; from
+// 1.0.0 on the two agree. The Mac CI job checks the bundle says this (.github/actions/mac-installer).
+def launcherVersion = project.version.toString()
+def bundleVersion = onMac && launcherVersion.startsWith('0.') ? '1' + launcherVersion.substring(1) : launcherVersion
+
+// A JRE as Adoptium ships one, less what a game never needs (JFR, the debugger and management agents, incubators):
+// the modules the spike ran RuneLite 1.13.4 on. java.se is every java.* module; the rest are the JDK's own that a
+// JRE carries, jdk.crypto.ec among them, without which no TLS handshake to GitHub or RuneLite would succeed. On
+// Windows jdk.crypto.mscapi too, the Windows certificate store (the Windows-ROOT and Windows-MY key stores):
+// RuneLite reads its trust roots from Windows-ROOT at every start and exits at once without it, which is how 1.0.0
+// failed on the first PC it was installed on (the spike and the test VMs ran on a full JDK, which has it). The
+// module exists in a Windows JDK alone, and jlink stops the build on a name the JDK doesn't have, so it is named on
+// Windows alone; SelfTest checks the store opens, on every built Windows installer.
+def runtimeModules = ['java.se', 'jdk.accessibility', 'jdk.charsets', 'jdk.crypto.cryptoki', 'jdk.crypto.ec',
+	'jdk.dynalink', 'jdk.httpserver', 'jdk.jsobject', 'jdk.localedata', 'jdk.management', 'jdk.naming.dns',
+	'jdk.naming.rmi', 'jdk.net', 'jdk.nio.mapmode', 'jdk.sctp', 'jdk.security.auth', 'jdk.security.jgss',
+	'jdk.unsupported', 'jdk.unsupported.desktop', 'jdk.xml.dom', 'jdk.zipfs'] + (onWindows ? ['jdk.crypto.mscapi'] : [])
+
+// jpackage's layout differs by system: where the executable, the jars (with the notices) and the runtime's home are.
+def imageDir = layout.buildDirectory.dir('image/' + appName + (onMac ? '.app' : '')).get()
+def launcherPath = onWindows ? appName + '.exe' : onMac ? 'Contents/MacOS/' + appName : 'bin/' + appName
+def appFolder = onWindows ? 'app' : onMac ? 'Contents/app' : 'lib/app'
+def runtimeHome = onWindows ? 'runtime' : onMac ? 'Contents/runtime/Contents/Home' : 'lib/runtime'
+
+// jlink without --strip-native-commands, so bin/java stays for the game's child JVM (jpackage's own jlink run
+// strips it, which is why the runtime is made here first); no header files or man pages, resources compressed.
+abstract class RuntimeImage extends DefaultTask
+{
+	@Input abstract Property<String> getJlink()
+	@InputFile abstract RegularFileProperty getJdkRelease()
+	@Input abstract ListProperty<String> getModules()
+	@OutputDirectory abstract DirectoryProperty getOutput()
+	@Inject abstract ExecOperations getExecOperations()
+	@Inject abstract FileSystemOperations getFileSystemOperations()
+
+	@TaskAction
+	void link()
+	{
+		File out = output.get().asFile
+		// jlink refuses a folder that exists.
+		fileSystemOperations.delete { delete(out) }
+		execOperations.exec {
+			executable = jlink.get()
+			args '--add-modules', modules.get().join(','), '--output', out.path,
+				'--no-header-files', '--no-man-pages', '--compress', 'zip-6'
+		}
+	}
+}
+
+// jpackage's app image: the native executable, the jars in the app folder (the main jar's Class-Path names the
+// others, which is how jpackage's launcher finds them) and the runtime above, copied as it is. On a Mac the bundle
+// id, the name the Dock and menu bar show, and the entitlements jpackage signs with (its ad-hoc signature now,
+// the Developer ID one later): RuneLite's two, which let a JVM under the hardened runtime compile at run time and
+// load RuneLite's native libraries.
+abstract class AppImage extends DefaultTask
+{
+	@Input abstract Property<String> getJpackage()
+	@Input abstract Property<String> getImageName()
+	@Input abstract Property<String> getAppVersion()
+	@Input abstract Property<String> getMainJar()
+	@InputDirectory abstract DirectoryProperty getInput()
+	@InputDirectory abstract DirectoryProperty getRuntime()
+	@Input abstract ListProperty<String> getMacOptions()
+	@OutputDirectory abstract DirectoryProperty getDest()
+	@Inject abstract ExecOperations getExecOperations()
+	@Inject abstract FileSystemOperations getFileSystemOperations()
+
+	@TaskAction
+	void pack()
+	{
+		String version = appVersion.get()
+		if (!(version ==~ /\d+\.\d+\.\d+/))
+		{
+			throw new GradleException("launcher/version.txt says \"$version\"; an app image wants three numbers, "
+				+ 'major.minor.patch')
+		}
+		File out = dest.get().asFile
+		fileSystemOperations.delete { delete(out) }
+		execOperations.exec {
+			executable = jpackage.get()
+			args '--type', 'app-image', '--name', imageName.get(), '--app-version', version,
+				'--vendor', "Odin's Gate", '--description', "Odin's Gate launcher",
+				'--input', input.get().asFile.path, '--main-jar', mainJar.get(),
+				'--main-class', 'net.odinsgate.launcher.Main', '--runtime-image', runtime.get().asFile.path,
+				'--dest', out.path
+			args macOptions.get()
+		}
+	}
+}
+
+// The Mac disk image around the app image (the one the self-test and the scan ran on), named for the chip:
+// jpackage writes <name>-<version>.dmg, which is moved to the release's fixed name.
+abstract class MacDmg extends DefaultTask
+{
+	@Input abstract Property<String> getJpackage()
+	@InputDirectory abstract DirectoryProperty getAppImage()
+	@Input abstract Property<String> getAppVersion()
+	@Input abstract Property<String> getProducedName()
+	@Input abstract Property<String> getDmgName()
+	@OutputDirectory abstract DirectoryProperty getDest()
+	@Inject abstract ExecOperations getExecOperations()
+	@Inject abstract FileSystemOperations getFileSystemOperations()
+
+	@TaskAction
+	void pack()
+	{
+		File out = dest.get().asFile
+		File scratch = new File(out, 'jpackage')
+		fileSystemOperations.delete { delete(scratch) }
+		// --app-version again: without it jpackage names the disk image for its default version, 1.0, whatever the
+		// app image says.
+		execOperations.exec {
+			executable = jpackage.get()
+			args '--type', 'dmg', '--app-image', appImage.get().asFile.path, '--app-version', appVersion.get(),
+				'--dest', scratch.path
+		}
+		File produced = new File(scratch, producedName.get())
+		if (!produced.isFile())
+		{
+			throw new GradleException("jpackage made no $produced; it holds: " + scratch.list().join(', '))
+		}
+		File dmg = new File(out, dmgName.get())
+		fileSystemOperations.delete { delete(dmg) }
+		if (!produced.renameTo(dmg))
+		{
+			throw new GradleException("$produced could not be moved to $dmg")
+		}
+		fileSystemOperations.delete { delete(scratch) }
+	}
+}
+
+tasks.register('runtimeImage', RuntimeImage) {
+	group = 'distribution'
+	description = 'The bundled Java runtime: jlink over this JDK, keeping bin/java for the game.'
+	jlink = "$jdk/bin/jlink$exeSuffix"
+	jdkRelease = file("$jdk/release")
+	modules = runtimeModules
+	output = layout.buildDirectory.dir('runtime')
+}
+
+tasks.register('packageInput', Sync) {
+	description = "What goes into the app image's app folder: installDist's jars and the notices."
+	dependsOn 'installDist'
+	from layout.buildDirectory.dir('install/odinsgate-launcher/lib')
+	from 'THIRD-PARTY-NOTICES.txt'
+	into layout.buildDirectory.dir('package-input')
+}
+
+tasks.register('appImage', AppImage) {
+	group = 'distribution'
+	description = "jpackage's app image in build/image: the executable, the jars, the notices and the runtime."
+	dependsOn 'packageInput'
+	jpackage = "$jdk/bin/jpackage$exeSuffix"
+	imageName.set(appName)
+	appVersion = bundleVersion
+	mainJar = "odinsgate-launcher-${project.version}.jar"
+	input = layout.buildDirectory.dir('package-input')
+	runtime = tasks.named('runtimeImage', RuntimeImage).flatMap { it.output }
+	macOptions = onMac ? ['--mac-package-identifier', 'net.odinsgate.launcher', '--mac-package-name', "Odin's Gate",
+		'--mac-entitlements', file('package/mac/entitlements.plist').path] : []
+	dest = layout.buildDirectory.dir('image')
+}
+
+// The image's own --self-test (SelfTest.java): its runtime starts the game's child JVM against a fake server here,
+// and the window opens where there is a display. Its log is printed after, since the Windows executable has no
+// console to print to.
+tasks.register('appImageSelfTest', Exec) {
+	group = 'verification'
+	description = "Runs the app image's --self-test from its executable."
+	dependsOn 'appImage'
+	def home = layout.buildDirectory.dir('self-test-home').get().asFile
+	executable = imageDir.file(launcherPath).asFile.path
+	args '--self-test', '--home', home.path
+	ignoreExitValue = true
+	outputs.upToDateWhen { false }
+	def printLog = onWindows
+	doLast {
+		File log = new File(home, 'logs/launcher.log')
+		if (printLog && log.isFile())
+		{
+			println log.text
+		}
+		int code = executionResult.get().exitValue
+		if (code != 0)
+		{
+			throw new GradleException("the app image's self-test exited with $code (its log is above)")
+		}
+	}
+}
+
+// ImageScan.java over the image, run from the image's own runtime and jar: names, content, jars, runtime, notices.
+tasks.register('appImageScan', Exec) {
+	group = 'verification'
+	description = 'Scans the app image for anything that must not ship, with its own runtime.'
+	dependsOn 'appImage'
+	executable = imageDir.dir(runtimeHome).file("bin/java$exeSuffix").asFile.path
+	args '-cp', imageDir.dir(appFolder).file("odinsgate-launcher-${project.version}.jar").asFile.path,
+		'net.odinsgate.launcher.ImageScan', '--image', imageDir.asFile.path,
+		'--allowed', file('package/allowed-jars.txt').path
+	inputs.dir imageDir
+	inputs.file 'package/allowed-jars.txt'
+	outputs.upToDateWhen { false }
+}
+
+// The Mac disk image, OdinsGate-mac-arm64.dmg or OdinsGate-mac-x64.dmg in build/installer: the app image for a
+// friend to drag to Applications, ad-hoc signed by jpackage until PR 20 signs it for real.
+tasks.register('macDmg', MacDmg) {
+	group = 'distribution'
+	description = 'The Mac disk image around the app image (a Mac only, for its own chip).'
+	dependsOn 'appImage'
+	onlyIf('a disk image is made on a Mac') { onMac }
+	it.jpackage = "$jdk/bin/jpackage"
+	// it.: the task's property, not the appImage task the project knows by that name.
+	it.appImage.set(imageDir)
+	it.appVersion = bundleVersion
+	it.producedName = "${appName}-${bundleVersion}.dmg"
+	it.dmgName = chip == 'arm64' ? 'OdinsGate-mac-arm64.dmg' : 'OdinsGate-mac-x64.dmg'
+	it.dest = layout.buildDirectory.dir('installer')
+}
+
+// The Linux archive, OdinsGate-linux-x64.tar.gz (or -arm64) in build/installer: the app image as it is, under one
+// OdinsGate/ folder with its executable bits kept, so a friend extracts it anywhere and runs OdinsGate/bin/OdinsGate.
+// No deb or rpm: either needs root to install, and the folder needs nothing.
+tasks.register('linuxTarball', Tar) {
+	group = 'distribution'
+	description = 'The Linux tar.gz around the app image (Linux only, for its own chip).'
+	dependsOn 'appImage'
+	onlyIf('a tar.gz is made on Linux') { onLinux }
+	from(imageDir) {
+		into appName
+		// Gradle's archive doesn't carry the source files' modes: the executables, bin/OdinsGate and the runtime's
+		// bin/java among them, get theirs back, so a friend runs the launcher with no chmod first.
+		eachFile { details ->
+			details.permissions { it.unix(details.file.canExecute() ? 0755 : 0644) }
+		}
+	}
+	archiveFileName = chip == 'arm64' ? 'OdinsGate-linux-arm64.tar.gz' : 'OdinsGate-linux-x64.tar.gz'
+	destinationDirectory = layout.buildDirectory.dir('installer')
+	compression = Compression.GZIP
+	reproducibleFileOrder = true
+}
+
+// The per-user installer around the image, OdinsGate-Setup.exe in build/installer, made with Inno Setup
+// (package/windows/OdinsGate.iss); -Piscc=<path to ISCC.exe> when it isn't where the GitHub runner has it.
+tasks.register('windowsInstaller', Exec) {
+	group = 'distribution'
+	description = 'The Windows installer around the app image (Windows only).'
+	dependsOn 'appImage'
+	onlyIf('the Windows installer is made on Windows') { onWindows }
+	def outDir = layout.buildDirectory.dir('installer').get().asFile
+	executable = findProperty('iscc') ?: 'C:/Program Files (x86)/Inno Setup 6/ISCC.exe'
+	args "/DAppVersion=${project.version}", "/DAppImage=${imageDir.asFile.path}", "/DOutputDir=${outDir.path}",
+		file('package/windows/OdinsGate.iss').path
+	inputs.dir imageDir
+	inputs.file 'package/windows/OdinsGate.iss'
+	outputs.dir outDir
+}

@@ -1,0 +1,11 @@
+{
+  "pins": [
+    {
+      "revision": 241,
+      "runelite": "1.13.4",
+      "commit": "1e634e64717418713898b06061a189ec1cdf948d",
+      "bootstrapSha256": "25f22ff874ddf8c4016c8d03150c24920cdaa536ae7ad44aed36173c826c0b2a",
+      "source": "static.runelite.net commit 'Release 1.13.4' (2026-10-24); its bootstrap.json.sha256 signature checks out against RuneLite's runelite.crt"
+    }
+  ]
+}

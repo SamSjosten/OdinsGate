@@ -1,0 +1,122 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# The jobs' names are the checks a ruleset on main can require. Every job runs on every change: the launcher is the
+# whole repository, and hosted runners cost a public repository nothing.
+jobs:
+  # The launcher's build and tests on Linux. The installed layout (bin/ and lib/) goes up as the odinsgate-launcher
+  # artifact, which the game server's test VMs run the launcher from (launcher/README.md, "The installed layout").
+  launcher:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: gradle/actions/setup-gradle@v4
+      - run: ./gradlew -p launcher build --build-cache
+      - uses: actions/upload-artifact@v4
+        with:
+          name: odinsgate-launcher
+          path: launcher/build/install/odinsgate-launcher/
+          if-no-files-found: error
+
+  # The launcher's tests on Windows, where friends run it: the same build as above, with nothing uploaded.
+  launcher-windows:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: gradle/actions/setup-gradle@v4
+      - shell: bash
+        run: ./gradlew -p launcher build --build-cache
+
+  # The Windows installer (launcher/README.md, "Installers"): the app image over a runtime that keeps bin/java, the
+  # installer around it, the image's self-test and scan, and an install, self-test and uninstall of the installer on
+  # the runner. The artifact is the installer, which a test VM installs.
+  installer-windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/windows-installer
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OdinsGate-Setup
+          path: launcher/build/installer/OdinsGate-Setup.exe
+          if-no-files-found: error
+
+  # The Mac disk images, one per chip (launcher/README.md, "Installers"): the app image, its self-test and scan, the
+  # disk image, and a copy of the app from it self-tested as a friend would run it.
+  installer-mac:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            chip: arm64
+          - os: macos-15-intel
+            chip: x64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/mac-installer
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OdinsGate-mac-${{ matrix.chip }}
+          path: launcher/build/installer/OdinsGate-mac-${{ matrix.chip }}.dmg
+          if-no-files-found: error
+
+  # The Linux archive (launcher/README.md, "Installers"): the app image, its self-test and scan, the tar.gz, and a
+  # copy extracted from it self-tested under a virtual display, so the window opens on a runner too.
+  installer-linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/linux-tarball
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OdinsGate-linux-x64
+          path: launcher/build/installer/OdinsGate-linux-x64.tar.gz
+          if-no-files-found: error
+
+  # The launcher's version file against the pull request (.github/scripts/launcher-version.js): a change to the pin
+  # table or the server's modulus bumps it, and a bump is newer than the last and not released yet.
+  launcher-version:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: node .github/scripts/launcher-version.js "origin/${{ github.base_ref }}" HEAD
+
+  # The friend download page and guides (docs/, GitHub Pages): every link is https to a known host or a file in
+  # docs/, every download button names an installer the launcher's Names.java knows, each exactly once, and no page
+  # carries a banned word (.github/scripts/friend-page.js).
+  friend-page:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: node .github/scripts/friend-page.js
+
+  # The workflow scripts' own tests (.github/scripts/*.test.js): the version check on plain data, the friend page
+  # checks on made-up pages and the real docs/, and the alert issues (pin-health.yml) against a stand-in for GitHub's
+  # API.
+  scripts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: node --test .github/scripts/*.test.js

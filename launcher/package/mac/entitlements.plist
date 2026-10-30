@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- The entitlements the Mac app and its java are signed with (launcher/README.md, "Installers"): RuneLite's own two
+     (osx/signing.entitlements in github.com/runelite/launcher), which let a JVM with the hardened runtime compile
+     code at run time and load RuneLite's native libraries. jpackage applies them to its ad-hoc signature now and to
+     the Developer ID signature once signing is set up. -->
+<plist version="1.0">
+<dict>
+	<key>com.apple.security.cs.allow-jit</key>
+	<true/>
+	<key>com.apple.security.cs.disable-library-validation</key>
+	<true/>
+</dict>
+</plist>

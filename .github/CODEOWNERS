@@ -1,0 +1,3 @@
+# Sam reviews every change to the workflows: they hold the launcher's release path, which signs with the key in the
+# release Environment, and the pin health alert.
+/.github/workflows/ @SamSjosten
