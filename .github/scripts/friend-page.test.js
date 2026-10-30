@@ -37,12 +37,12 @@ test('a banned word in the text is a problem, but the repo name inside a link is
 test('links must be https, on a known host, and download links must name a known installer', () => {
   const problems = check({ 'index.html': page([DOWNLOAD + 'OdinsGate-Setup.exe', DOWNLOAD + 'OdinsGate-mac-arm64.dmg',
     'http://runelite.net', 'https://example.com/x', DOWNLOAD + 'OdinsGate-other.zip',
-    'https://github.com/SamSjosten/OSRSPS/releases']) }, names);
+    'https://github.com/SamSjosten/OdinsGate/releases']) }, names);
   assert.deepStrictEqual(problems, [
     'index.html: "http://runelite.net" isn\'t https',
     'index.html: "https://example.com/x" is on a host the page shouldn\'t link',
     'index.html: "OdinsGate-other.zip" isn\'t an installer Names.java knows',
-    'index.html: "https://github.com/SamSjosten/OSRSPS/releases" points into the repo; friends only get releases/latest/download/ links',
+    'index.html: "https://github.com/SamSjosten/OdinsGate/releases" points into the repo; friends only get releases/latest/download/ links',
   ]);
 });
 

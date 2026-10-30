@@ -3,8 +3,8 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const { check, compare } = require('./launcher-version.js');
 
-const PINS = 'src/main/resources/runelite-pins.json';
-const MODULUS = 'src/main/resources/rsa-modulus.txt';
+const PINS = 'launcher/runelite-pins.json';
+const MODULUS = 'launcher/rsa-modulus.txt';
 const TAGS = ['v0.1.0', 'v0.1.1'];
 const same = { before: '0.1.1\n', after: '0.1.1\n', minBefore: '0.1.0\n', minAfter: '0.1.0\n', tags: TAGS };
 

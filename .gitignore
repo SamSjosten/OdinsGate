@@ -28,10 +28,6 @@ keys.json
 recordings/
 *.bin
 
-# deploy/auto-deploy.sh's state on the server VM, and deploy/staging.sh's worktree and data folder
-/.deploy/
-/.staging/
-
 # Local config and secrets: keys, certificates and signing material never enter git (the release key lives only in
 # the GitHub Environment named release).
 *.local.*

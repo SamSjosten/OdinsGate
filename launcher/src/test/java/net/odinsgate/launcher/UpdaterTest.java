@@ -800,7 +800,7 @@ public class UpdaterTest
 	@Test
 	public void theReleaseUrlsAreGitHubsLatestAndVersionedDownloads()
 	{
-		assertEquals("https://github.com/SamSjosten/OSRSPS/releases", Updater.RELEASES);
-		assertEquals(URI.create("https://samsjosten.github.io/OSRSPS/"), Updater.DOWNLOAD_PAGE);
+		assertEquals("https://github.com/SamSjosten/OdinsGate/releases", Updater.RELEASES);
+		assertEquals(URI.create("https://samsjosten.github.io/OdinsGate/"), Updater.DOWNLOAD_PAGE);
 	}
 }

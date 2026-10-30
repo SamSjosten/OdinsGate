@@ -79,7 +79,7 @@ public final class LauncherRun
 	 * deploy and while the server is down. The window shows it as plain text, never as HTML, capped in length.
 	 */
 	static final URI NOTICE =
-		URI.create("https://raw.githubusercontent.com/SamSjosten/OSRSPS/main/launcher/notice.txt");
+		URI.create("https://raw.githubusercontent.com/SamSjosten/OdinsGate/main/launcher/notice.txt");
 	static final Duration NOTICE_TIMEOUT = Duration.ofSeconds(5);
 	/** More than this is not a notice; the window cuts the text down further for the screen. */
 	static final int NOTICE_MAX_BYTES = 4096;

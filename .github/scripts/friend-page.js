@@ -15,7 +15,7 @@ const path = require('path');
 
 const DOCS = 'docs';
 const NAMES = 'launcher/src/main/java/net/odinsgate/launcher/Names.java';
-const DOWNLOAD = 'https://github.com/SamSjosten/OSRSPS/releases/latest/download/';
+const DOWNLOAD = 'https://github.com/SamSjosten/OdinsGate/releases/latest/download/';
 const HOSTS = ['github.com', 'runelite.net', 'samsjosten.github.io'];
 
 // The banned pattern and the installer names, read from Names.java so the page can't drift from the code.
@@ -48,7 +48,7 @@ function check(files, names) {
           const name = href.slice(DOWNLOAD.length);
           if (!counts.has(name)) problems.push(`${file}: "${name}" isn't an installer Names.java knows`);
           else if (file === 'index.html') counts.set(name, counts.get(name) + 1);
-        } else if (href.startsWith('https://github.com/SamSjosten/OSRSPS/')) {
+        } else if (href.startsWith('https://github.com/SamSjosten/OdinsGate/')) {
           problems.push(`${file}: "${href}" points into the repo; friends only get releases/latest/download/ links`);
         }
         continue;

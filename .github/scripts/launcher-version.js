@@ -1,7 +1,7 @@
 // The launcher's version file against a pull request's changes, run by the launcher-version job in
 // .github/workflows/build.yml (launcher/README.md, "Releases"): a merge to main that changes launcher/version.txt
 // publishes a release, and the signed manifest carries the RuneLite pin table and the server's modulus, so
-//   - a change to src/main/resources/runelite-pins.json or rsa-modulus.txt must bump launcher/version.txt, or no
+//   - a change to launcher/runelite-pins.json or launcher/rsa-modulus.txt must bump launcher/version.txt, or no
 //     installed launcher would ever get it;
 //   - a bump must be dotted digits, newer than the version before it, and not a tag that is released already;
 //   - launcher/min-bootstrap-version.txt can only change along with a bump, and never above the version.
@@ -12,7 +12,7 @@
 
 const VERSION = 'launcher/version.txt';
 const MIN_BOOTSTRAP = 'launcher/min-bootstrap-version.txt';
-const SIGNED = ['src/main/resources/runelite-pins.json', 'src/main/resources/rsa-modulus.txt'];
+const SIGNED = ['launcher/runelite-pins.json', 'launcher/rsa-modulus.txt'];
 const DOTTED = /^\d+(\.\d+)*$/;
 
 // Dotted versions by number, a missing part being 0 (0.2 is 0.2.0), the way the launcher's Versions.compare does.

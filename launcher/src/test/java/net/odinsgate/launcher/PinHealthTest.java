@@ -308,10 +308,11 @@ public class PinHealthTest
 	}
 
 	@Test
-	public void theServersOwnPinTableReadsAndAgreesWithTheProvenPin() throws IOException
+	public void theCommittedPinTableReadsAndAgreesWithTheProvenPin() throws IOException
 	{
-		// The table the check runs against weekly, next to the launcher's committed proof of the 241 entry.
-		List<Manifest.Pin> table = PinHealth.readPins(Path.of("..", "src", "main", "resources", "runelite-pins.json"));
+		// The table the check runs against weekly (launcher/runelite-pins.json; the server keeps a copy in step with
+		// it), next to the launcher's committed proof of the 241 entry.
+		List<Manifest.Pin> table = PinHealth.readPins(Path.of("runelite-pins.json"));
 		assertTrue(table.contains(Fixtures.REAL_PIN), table.toString());
 	}
 

@@ -16,6 +16,8 @@ on:
     paths:
       - launcher/version.txt
       - launcher/min-bootstrap-version.txt
+      - launcher/runelite-pins.json
+      - launcher/rsa-modulus.txt
       - launcher/build.gradle
       - launcher/src/main/java/net/odinsgate/launcher/Release.java
       - launcher/package.gradle
@@ -92,7 +94,7 @@ jobs:
           java -cp 'launcher/build/install/odinsgate-launcher/lib/*' "$TOOL" manifest \
             --version "${{ steps.version.outputs.version }}" \
             --min-bootstrap "$(tr -d '[:space:]' < launcher/min-bootstrap-version.txt)" \
-            --lib dist --pins src/main/resources/runelite-pins.json --modulus src/main/resources/rsa-modulus.txt \
+            --lib dist --pins launcher/runelite-pins.json --modulus launcher/rsa-modulus.txt \
             --out dist/manifest.json
       - name: Dry run, a throwaway key made here signs and verifies the manifest
         if: steps.version.outputs.publish != 'true'

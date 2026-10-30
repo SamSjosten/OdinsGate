@@ -1,7 +1,7 @@
 name: pin-health
 # Does every RuneLite pin still hold? Weekly, and on a pull request that touches the pin table or the check itself,
 # `./gradlew -p launcher pinHealth` (launcher/src/main/java/net/odinsgate/launcher/PinHealth.java) checks each pin in
-# src/main/resources/runelite-pins.json against RuneLite's servers: the bootstrap still carries the pinned SHA-256 and
+# launcher/runelite-pins.json against RuneLite's servers: the bootstrap still carries the pinned SHA-256 and
 # RuneLite's signature, every jar it names answers a HEAD request with its size, and RuneLite's runtime config doesn't
 # list the pinned client version as outdated. HEAD only: no RuneLite jar is ever downloaded or cached here. A scheduled
 # run that fails opens one issue, "A RuneLite pin is no longer healthy", assigned to the repository's owner
@@ -12,7 +12,7 @@ on:
   workflow_dispatch:
   pull_request:
     paths:
-      - src/main/resources/runelite-pins.json
+      - launcher/runelite-pins.json
       - launcher/src/main/java/net/odinsgate/launcher/PinHealth.java
       - launcher/src/main/java/net/odinsgate/launcher/RuneLiteCache.java
       - launcher/src/main/java/net/odinsgate/launcher/RuneLiteSignature.java

@@ -1,6 +1,7 @@
-// The Odin's Gate launcher, which will replace RSProx for friends. Its own Gradle build, like test-runner, so a
-// launcher change never rebuilds or restarts the game server (deploy/auto-deploy.sh skips launcher/). The package is
-// net.odinsgate, not the server's, and nothing a friend can see may contain the banned words (NamesTest).
+// The Odin's Gate launcher, which friends install instead of RSProx. Its own Gradle build in its own repository,
+// OdinsGate, apart from the game server's, so a launcher change never touches the server and the server's code stays
+// out of public view. The package is net.odinsgate, and nothing a friend can see may contain the banned words
+// (NamesTest).
 plugins {
 	id 'java'
 	// installDist lays the launcher out the way it is installed and run: bin/odinsgate-launcher(.bat) over lib/*.jar.
@@ -58,21 +59,21 @@ test {
 	useJUnitPlatform()
 	// The window's panel is tested without a display: Swing's lightweight components work headless, a frame doesn't.
 	systemProperty 'java.awt.headless', 'true'
-	// Besides their classes, the tests read this module's packaging files and the server's pin table: inputs, so CI's
-	// build cache never hands back a pass from before a change to them.
+	// Besides their classes, the tests read this module's packaging files and the pin table (runelite-pins.json, next
+	// to this file): inputs, so CI's build cache never hands back a pass from before a change to them.
 	inputs.files(fileTree(projectDir) { exclude 'build/**', 'src/**', '.gradle/**' }).withPathSensitivity(PathSensitivity.RELATIVE)
-	inputs.file('../src/main/resources/runelite-pins.json').withPathSensitivity(PathSensitivity.RELATIVE)
 }
 
-// The weekly pin health check (.github/workflows/pin-health.yml): every pin in the server's runelite-pins.json still
-// verifies, every jar it names answers a HEAD request, and RuneLite's outdated list doesn't name it. HEAD only: no
-// RuneLite jar is ever downloaded or cached by it. -Ppins=<file> checks another table.
+// The weekly pin health check (.github/workflows/pin-health.yml): every pin in runelite-pins.json (next to this
+// file; the server keeps a copy of the same table) still verifies, every jar it names answers a HEAD request, and
+// RuneLite's outdated list doesn't name it. HEAD only: no RuneLite jar is ever downloaded or cached by it.
+// -Ppins=<file> checks another table.
 tasks.register('pinHealth', JavaExec) {
 	group = 'verification'
 	description = 'Checks every RuneLite pin against RuneLite\'s servers (HEAD only, no jar is downloaded).'
 	classpath = sourceSets.main.runtimeClasspath
 	mainClass = 'net.odinsgate.launcher.PinHealth'
-	args '--pins', (findProperty('pins') ?: file('../src/main/resources/runelite-pins.json').path)
+	args '--pins', (findProperty('pins') ?: file('runelite-pins.json').path)
 }
 
 // The runtime, the app image, its self-test and scan, and the installers (README.md, "Installers").

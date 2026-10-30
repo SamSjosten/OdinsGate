@@ -1,4 +1,4 @@
-// One open issue per failing scheduled check (.github/workflows/probe.yml and pin-health.yml), assigned to the
+// One open issue per failing scheduled check (.github/workflows/pin-health.yml), assigned to the
 // repository's owner, so a failure reaches Sam as an issue email whoever last edited the workflow (GitHub mails a
 // failed scheduled run only to the person who last changed its cron line, and a line Claude wrote reaches no one).
 //

@@ -1,9 +1,12 @@
 # Odin's Gate launcher
 
-The launcher friends will install instead of RSProx: it downloads a pinned RuneLite from RuneLite's own servers,
-patches it in memory to our server and key, and keeps itself up to date from this repo's GitHub Releases. This folder
-is its own Gradle build, like `test-runner/`, so a launcher change never rebuilds or restarts the game server
-(`deploy/auto-deploy.sh` skips `launcher/`).
+The launcher friends install instead of RSProx: it downloads a pinned RuneLite from RuneLite's own servers, patches it
+in memory to our server and key, and keeps itself up to date from this repo's GitHub Releases. This folder is its own
+Gradle build, in its own public repository (OdinsGate) since 2026-10-30; the game server, its deploy and its test
+tooling live in a private repository of their own, so a launcher change never touches the server and the server's
+code stays out of public view. Two files are kept in step by hand across the two repositories: the pin table
+`runelite-pins.json` and the live server's public modulus `rsa-modulus.txt`, both next to this file (the server reads
+its own copies from its resources); the signed manifest carries them, so a change to either here bumps `version.txt`.
 
 Build and test: `./gradlew -p launcher build` (CI's `launcher` job runs the same). Java 21, package `net.odinsgate`.
 
@@ -127,7 +130,7 @@ The core that later PRs build on; no window or releases yet:
   revision, and feed the report logs with passwords in them. On the VM, `OdinsGate.cmd` now sends the launcher's
   console to `logs\console.log`, since `logs\launcher.log` is the launcher's own.
 - Pin health: `PinHealth` (`./gradlew -p launcher pinHealth`, run by `.github/workflows/pin-health.yml` weekly and on
-  a pull request touching the pins or the check) takes the server's `src/main/resources/runelite-pins.json`, the same
+  a pull request touching the pins or the check) takes `runelite-pins.json` next to this file (the server keeps a copy), the same
   table the manifest's pins come from, and asks RuneLite's servers whether each pin still holds: the bootstrap
   carries the pinned SHA-256 and RuneLite's signature (through `RuneLiteCache` itself, into a scratch folder deleted
   after), every jar it names for any system answers a HEAD request with the bootstrap's size, and RuneLite's runtime
@@ -135,7 +138,7 @@ The core that later PRs build on; no window or releases yet:
   client that read it) doesn't name the pinned version. HEAD only: no jar is downloaded or cached in Actions. One
   `ok` or `FAIL` line per check; exit 0, 1 when a check failed, 2 for a bad call. The tests run it against a fake
   static host, repository and config on loopback, signed by a throwaway key, and check that no jar is ever fetched;
-  one reads the server's real table and finds the proven 241 pin in it.
+  one reads the committed table and finds the proven 241 pin in it.
 - Self-update (`Updater`, `VersionLoader`, `Versions`): what the installed launcher, the thin shell under the
   installer's runtime, does before anything else when run without `--manifest`. It fetches the latest release's
   `manifest.json` and `.sig` from this repo's GitHub Releases (`releases/latest/download/`, redirects followed; the
@@ -172,9 +175,9 @@ The core that later PRs build on; no window or releases yet:
   scheduled task (`test-runner/launch/OdinsGate.cmd`: `--auto --dev`, data under `C:\RSPS\launcher`, the status
   file and a manifest `write-dev-manifest.ps1` makes from the live server), and `start-client.ps1 -Launcher
   [-LauncherVersion 0.1.0]` brings up a logged-in client through it by waiting on the status file; see
-  `test-runner/launch/README.md`. The installers (below) wrap the same jars with a bundled runtime.
+  `test-runner/launch/README.md` in the server's repository. The installers (below) wrap the same jars with a bundled runtime.
 
-The spike that proved the patching route on the real jars was PR #113, closed unmerged as planned: nothing of
+The spike that proved the patching route on the real jars was PR #113 of the server's repository, closed unmerged as planned: nothing of
 RuneLite's or Jagex's enters this repo, in git or in a release.
 
 ## Installers
@@ -275,8 +278,8 @@ after "The server was updated" (today it has to be closed and reopened).
 A release is a merge to `main` that changes `launcher/version.txt` (`build.gradle` reads it, so the jar's version is
 the file's). `.github/workflows/release.yml` then builds the jars and writes the manifest with the launcher's own
 release tool, `net.odinsgate.launcher.Release`: every jar under `lib/` with its SHA-256 and size, the pin table from
-`src/main/resources/runelite-pins.json`, the server (`odinsgate.net`, 43594 and 43595) with the modulus from
-`src/main/resources/rsa-modulus.txt`, and `minBootstrapVersion` from `launcher/min-bootstrap-version.txt`, the oldest
+`launcher/runelite-pins.json`, the server (`odinsgate.net`, 43594 and 43595) with the modulus from
+`launcher/rsa-modulus.txt`, and `minBootstrapVersion` from `launcher/min-bootstrap-version.txt`, the oldest
 installed shell that can still run the release (bumped only when the hand-off between shell and version changes).
 The `publish` job, which only a push to `main` or a run by hand without `dry_run` reaches, signs the manifest with
 the key in the `release` Environment, checks the signature against the keys built into `TrustedKeys` (a key no
@@ -305,9 +308,13 @@ installers, then the manifest and its `.sig` last, and only then publishes it as
      click per release), and the secret `RELEASE_SIGNING_KEY` holding the whole text of `release-primary.pem`. The
      workflow names the Environment, so GitHub would make an unprotected one at the first release if it isn't there.
   3. A pull request that puts both public halves into `TrustedKeys.SPKI_BASE64` (primary first, backup last) and
-     bumps `version.txt`: its merge is the first release (done 2026-10-30, version 1.0.0). Before it every real run
+     bumps `version.txt`: its merge is the first release (done 2026-10-30, version 1.0.0, in the server's repository, where the launcher then lived; the Environment and its secret were made again here when the launcher moved). Before it every real run
      stopped at `verify` with "no release keys are built into this launcher yet".
   4. `.github/CODEOWNERS` names Sam for `.github/workflows/`, so a change to the release path asks for his review.
+- The launcher lived in the server's repository until 2026-10-30, and its releases up to 1.0.1 (v1.0.0, v1.0.1) are
+  there. From 1.0.2 the releases are this repository's: `Updater.RELEASES` and the download page point here, and a
+  launcher installed from the server repository's releases comes over through a bridge release, the same 1.0.2
+  published there last, which updates it to jars that read this repository's manifest.
 - A release that turns out broken ships again as a new, higher version: the updater never downgrades. A fix to the
   runtime (1.0.1, 2026-10-30: the Windows certificate store module) also raises `min-bootstrap-version.txt` to the
   new version, since the self-update replaces jars and never the runtime: every older launcher then shows "Please
@@ -322,10 +329,10 @@ and the launcher keeps them on the pinned build. Then:
 
 1. Wait for three things: RSProt's `osrs-242-*` modules on Maven Central, a 242 cache on OpenRS2, and RuneLite's 242
    release.
-2. PR A adds the 242 pin to `src/main/resources/runelite-pins.json`: the first static.runelite.net commit on or after
+2. PR A, in this repository, adds the 242 pin to `launcher/runelite-pins.json`: the first static.runelite.net commit on or after
    update day whose client logs in. It bumps `launcher/version.txt` (CI's `launcher-version` job insists), so its
    merge releases a manifest that knows both revisions while the server still runs 241.
-3. PR B bumps the server: `Revision.MAJOR = 242`, the `osrs-242-*` libraries, compile fixes, and
+3. PR B, in the server's repository, bumps the server and its copy of the pin table: `Revision.MAJOR = 242`, the `osrs-242-*` libraries, compile fixes, and
    `deploy/cache-build.txt`. Before it merges, the staging server runs its branch (`deploy/README.md`, "The staging
    server"): a test VM runs the launcher and the test-runner examples against it, and CI runs the headless tests and
    the cache checks.
