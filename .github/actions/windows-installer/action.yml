@@ -1,0 +1,45 @@
+name: Windows installer
+description: >-
+  Builds the Odin's Gate app image and its installer on a Windows runner (launcher/package.gradle), runs the image's
+  --self-test and the image scan, then installs the installer silently, runs the installed launcher's --self-test
+  and uninstalls it again. The installer is left at launcher/build/installer/OdinsGate-Setup.exe for the caller to
+  upload (launcher/README.md, "Installers").
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-java@v4
+      with:
+        distribution: temurin
+        java-version: "21"
+    - uses: gradle/actions/setup-gradle@v4
+    # Not `build`: the unit tests run in build.yml's launcher job on Linux, and eight of them aren't Windows-clean yet
+    # (println's line separator, /absolute paths, jars still held by a class loader when the temp folder goes), a
+    # follow-up. What is checked here is the image and the installer, from the real executable.
+    - name: The app image, its self-test and scan, and the installer
+      shell: bash
+      run: ./gradlew -p launcher appImageSelfTest appImageScan windowsInstaller
+    - name: Install silently, self-test the installed launcher, uninstall
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = 'Stop'
+        $setup = Join-Path $env:GITHUB_WORKSPACE 'launcher\build\installer\OdinsGate-Setup.exe'
+        $app = Join-Path $env:LOCALAPPDATA 'Programs\OdinsGate'
+        $data = Join-Path $env:RUNNER_TEMP 'odinsgate-installed-self-test'
+        Write-Host "$setup is $([math]::Round((Get-Item $setup).Length / 1MB, 1)) MB"
+        $install = Start-Process -FilePath $setup -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' `
+          -PassThru -Wait
+        if ($install.ExitCode -ne 0) { throw "the installer exited with $($install.ExitCode)" }
+        $exe = Join-Path $app 'OdinsGate.exe'
+        if (-not (Test-Path $exe)) { throw "no OdinsGate.exe under $app after the install" }
+        Write-Host "installed under $app"
+        $run = Start-Process -FilePath $exe -ArgumentList '--self-test', '--home', "`"$data`"" -PassThru -Wait
+        Get-Content (Join-Path $data 'logs\launcher.log') | Write-Host
+        if ($run.ExitCode -ne 0) { throw "the installed launcher's self-test exited with $($run.ExitCode)" }
+        $uninstall = Start-Process -FilePath (Join-Path $app 'unins000.exe') `
+          -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' -PassThru -Wait
+        if ($uninstall.ExitCode -ne 0) { throw "the uninstaller exited with $($uninstall.ExitCode)" }
+        # The uninstaller hands over to a copy of itself and exits first; the copy gets a minute to finish.
+        $deadline = (Get-Date).AddSeconds(60)
+        while ((Test-Path $exe) -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 2 }
+        if (Test-Path $exe) { throw "OdinsGate.exe is still there after the uninstall" }
+        Write-Host 'installed, self-tested and uninstalled'

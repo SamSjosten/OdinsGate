@@ -63,6 +63,17 @@ public class LaunchOptionsTest
 	}
 
 	@Test
+	public void theSelfTestIsAFlagAndNeedsNothingElse()
+	{
+		assertTrue(LaunchOptions.parse(List.of("--self-test")).selfTest());
+		assertFalse(LaunchOptions.NONE.selfTest());
+		assertFalse(LaunchOptions.parse(List.of("--auto")).selfTest());
+		LaunchOptions both = LaunchOptions.parse(List.of("--self-test", "--home", "x"));
+		assertTrue(both.selfTest() && both.home() != null);
+		assertTrue(LaunchOptions.USAGE.contains("[--self-test]"));
+	}
+
+	@Test
 	public void theHttpPortCanBeGivenToo()
 	{
 		LaunchOptions options = LaunchOptions.parse(List.of("--server", "192.168.0.210:44594:48595"));

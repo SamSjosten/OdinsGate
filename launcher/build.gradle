@@ -39,7 +39,10 @@ tasks.withType(JavaCompile).configureEach {
 jar {
 	manifest {
 		// Main-Class is the launcher itself; the child JVM's entry point (Loader) is named on its command line.
-		attributes 'Main-Class': 'net.odinsgate.launcher.Main', 'Implementation-Version': version
+		// Class-Path names the other jars next to this one: jpackage's launcher puts only the main jar on the class
+		// path and follows this to the rest (package.gradle); installDist's scripts list every jar themselves.
+		attributes 'Main-Class': 'net.odinsgate.launcher.Main', 'Implementation-Version': version,
+			'Class-Path': configurations.runtimeClasspath.elements.map { it.collect { f -> f.asFile.name }.join(' ') }
 	}
 }
 
@@ -67,3 +70,6 @@ tasks.register('pinHealth', JavaExec) {
 	mainClass = 'net.odinsgate.launcher.PinHealth'
 	args '--pins', (findProperty('pins') ?: file('../src/main/resources/runelite-pins.json').path)
 }
+
+// The runtime, the app image, its self-test and scan, and the installers (README.md, "Installers").
+apply from: 'package.gradle'

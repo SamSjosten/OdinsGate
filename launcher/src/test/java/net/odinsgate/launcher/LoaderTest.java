@@ -178,4 +178,31 @@ public class LoaderTest
 		IOException refused = assertThrows(IOException.class, () -> Loader.start(options, log, failures::add));
 		assertTrue(refused.getMessage().contains("injected-client-gone.jar"), refused.getMessage());
 	}
+
+	/** The self-test child in this JVM: the guard set, the allowed port reached, elsewhere refused by the guard. */
+	@Test
+	public void theSelfTestChildReachesTheAllowedPortAndIsRefusedElsewhere() throws IOException
+	{
+		ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+		PrintStream log = new PrintStream(bytes, true, StandardCharsets.UTF_8);
+		try (java.net.ServerSocket game = new java.net.ServerSocket(0, 50, java.net.InetAddress.getLoopbackAddress()))
+		{
+			String allowed = "127.0.0.1:" + game.getLocalPort();
+			int code = Loader.selfTest(new String[] {Loader.SELF_TEST, "--allow", allowed, "--allow", "127.0.0.1:1",
+				"--", "--jav_config", "ignored"}, log);
+			String out = bytes.toString(StandardCharsets.UTF_8);
+			assertEquals(0, code, out);
+			assertTrue(out.contains("[loader] self-test: reached " + allowed + " through the guard"), out);
+			assertTrue(out.contains("[loader] self-test: 192.0.2.1:80 refused ("), out);
+			assertTrue(out.contains(Loader.SELF_TEST_OK + ": java "), out);
+			assertEquals(List.of(Loader.SELF_TEST, "--allow", "h:1", "--allow", "h:2"),
+				Loader.selfTestArguments(new Manifest.Server("h", 1, 2, "ab")));
+		}
+		bytes.reset();
+		assertEquals(Loader.EXIT_USAGE, Loader.selfTest(new String[] {Loader.SELF_TEST}, log));
+		assertEquals(Loader.EXIT_USAGE, Loader.selfTest(new String[] {Loader.SELF_TEST, "--jar", "x"}, log));
+		assertEquals(Loader.EXIT_USAGE, Loader.selfTest(new String[] {Loader.SELF_TEST, "--allow", "no port"}, log));
+		String out = bytes.toString(StandardCharsets.UTF_8);
+		assertTrue(out.contains("at least one --allow") && out.contains("unknown argument --jar"), out);
+	}
 }

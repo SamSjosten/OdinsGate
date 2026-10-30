@@ -63,6 +63,21 @@ jobs:
           path: launcher/build/install/odinsgate-launcher/
           if-no-files-found: error
 
+  # The Windows installer (launcher/README.md, "Installers"): the app image over a runtime that keeps bin/java, the
+  # installer around it, the image's self-test and scan, and an install, self-test and uninstall of the installer on
+  # the runner. The artifact is the installer, which a test VM installs.
+  installer-windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/windows-installer
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OdinsGate-Setup
+          path: launcher/build/installer/OdinsGate-Setup.exe
+          if-no-files-found: error
+
   # The VM's launch scripts: the parts that need no VM, run with PowerShell 7 on Linux.
   launch-scripts:
     runs-on: ubuntu-latest
