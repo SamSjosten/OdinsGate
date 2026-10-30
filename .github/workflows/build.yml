@@ -30,13 +30,22 @@ jobs:
       - run: deploy/staging-test.sh
 
   # The workflow scripts (.github/scripts): the merge conflict check (mergeable.yml) and the alert issues
-  # (probe.yml, pin-health.yml) against a stand-in for GitHub's API, and the odinsgate probe against a status page
-  # and a game port on loopback.
+  # (probe.yml, pin-health.yml) against a stand-in for GitHub's API, the odinsgate probe against a status page
+  # and a game port on loopback, and the friend page checks on made-up pages and the real docs/.
   mergeable-script:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - run: node --test .github/scripts/*.test.js
+
+  # The friend download page and guides (docs/, GitHub Pages; README.md, "Letting friends test"): every link is
+  # https to a known host or a file in docs/, every download button names an installer the launcher's Names.java
+  # knows, each exactly once, and no page carries a banned word (.github/scripts/friend-page.js).
+  friend-page:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: node .github/scripts/friend-page.js
 
   # The launcher's version file against the pull request (.github/scripts/launcher-version.js): a change to the pin
   # table or the server's modulus bumps it, and a bump is newer than the last and not released yet.

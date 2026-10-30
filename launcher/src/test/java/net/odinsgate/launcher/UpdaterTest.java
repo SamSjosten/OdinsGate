@@ -801,6 +801,6 @@ public class UpdaterTest
 	public void theReleaseUrlsAreGitHubsLatestAndVersionedDownloads()
 	{
 		assertEquals("https://github.com/SamSjosten/OSRSPS/releases", Updater.RELEASES);
-		assertEquals(URI.create("https://github.com/SamSjosten/OSRSPS/releases/latest"), Updater.DOWNLOAD_PAGE);
+		assertEquals(URI.create("https://samsjosten.github.io/OSRSPS/"), Updater.DOWNLOAD_PAGE);
 	}
 }
