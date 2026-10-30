@@ -217,10 +217,30 @@ Friends install one file for their system and nothing else: the installer carrie
   (`%LOCALAPPDATA%\OdinsGate`) is left alone by the uninstaller. Unsigned until PR 20: the browser's "Keep" and
   "Windows protected your PC" (More info, Run anyway) are what a friend sees, and Smart App Control blocks it
   outright. No icon yet: jpackage's default Java one, until someone draws Odin's Gate one.
-- CI (`.github/actions/windows-installer`, run by build.yml's `installer-windows` job on every pull request and by
-  release.yml's `windows` job): the tasks above on windows-latest, then the installer itself: installed silently,
-  the installed launcher's `--self-test` run and its log printed, and uninstalled again. build.yml uploads the
-  installer as the `OdinsGate-Setup` artifact, which is what a test VM installs; a release carries it as an asset.
+- Mac: `macDmg` runs jpackage over the same app image (the one the self-test and the scan ran on) into
+  `build/installer/OdinsGate-mac-arm64.dmg` on an Apple chip or `OdinsGate-mac-x64.dmg` on an Intel Mac, the same
+  names in every release: jpackage makes no universal app, and Apple chips need the arm64 build, since RuneLite's
+  arm64 natives only load when Java reports an aarch64 CPU. The app is `OdinsGate.app`, shown as Odin's Gate in the
+  Dock and the menu bar, with the bundle id `net.odinsgate.launcher`; a friend drags it to Applications. jpackage
+  signs it ad hoc with `package/mac/entitlements.plist` (RuneLite's two, `allow-jit` and
+  `disable-library-validation`, which a JVM under the hardened runtime needs to compile and to load RuneLite's
+  natives), the app and its java alike; PR 20 replaces that with a Developer ID signature, notarized and stapled.
+  macOS wants a bundle version whose first number is above zero (jpackage refuses `0.x.y` there), so a launcher
+  still at `0.x.y` is bundled as `1.x.y`: the shell's version, what Finder shows for the app. The launcher's own
+  version, in its window, the status file and the manifest, is the jar's and stays as it is; from `1.0.0` on the
+  two agree, which is a reason to make the first release friends get `1.0.0`. The CI job checks the bundle says
+  what this mapping says.
+  Until then macOS says the app can't be checked: since Sequoia a friend goes to System Settings, Privacy &
+  Security, Open Anyway, and a "damaged" message means the quarantine flag has to go (`xattr -d
+  com.apple.quarantine`). The Intel build stops when no friend has an Intel Mac (GitHub retires those runners in
+  2027).
+- CI (`.github/actions/windows-installer` and `mac-installer`, run by build.yml's `installer-windows` and
+  `installer-mac` jobs on every pull request, macos-latest for Apple chips and macos-15-intel for Intel, and by
+  release.yml's `windows` and `mac` jobs): the tasks above, then the installer itself. On Windows it is installed
+  silently, the installed launcher's `--self-test` run and its log printed, and uninstalled again; on a Mac the
+  disk image is opened, the app copied to Applications, its `--self-test` run and the copy removed. build.yml
+  uploads the installer as the `OdinsGate-Setup` artifact, which is what a test VM installs, and the disk images as
+  `OdinsGate-mac-arm64` and `OdinsGate-mac-x64`; a release carries all three as assets.
   The unit tests run in the `launcher` (Linux) and `launcher-windows` jobs, not here; the Windows run is where
   friends' launchers live, and what caught the tests that assumed `\n` after println, `/absolute` paths and a temp
   folder deletable while a class loader still held a jar in it.
@@ -230,9 +250,10 @@ Friends install one file for their system and nothing else: the installer carrie
   self-test child in this JVM. On Linux, `appImageSelfTest appImageScan` build and prove the whole image here, bar
   the installer.
 
-Not yet: a Mac and a Linux build (PRs 18 and 19), signing (PR 20), `SHA256SUMS` over the installers (with the
-signing PR), the test VMs running the client through an installed launcher instead of installDist's layout, and a
-manifest bundled in the image for a first start with no internet (the first start fetches RuneLite anyway).
+Not yet: a Linux build (PR 19), signing (PR 20), `SHA256SUMS` over the installers (with the signing PR), a Mac
+run of the real client (PR 21), the test VMs running the client through an installed launcher instead of
+installDist's layout, and a manifest bundled in the image for a first start with no internet (the first start
+fetches RuneLite anyway).
 
 ## Releases
 
@@ -244,8 +265,8 @@ release tool, `net.odinsgate.launcher.Release`: every jar under `lib/` with its 
 installed shell that can still run the release (bumped only when the hand-off between shell and version changes).
 The `publish` job, which only a push to `main` or a run by hand without `dry_run` reaches, signs the manifest with
 the key in the `release` Environment, checks the signature against the keys built into `TrustedKeys` (a key no
-installed launcher trusts publishes nothing), makes a draft release `v<version>`, uploads the jars and the Windows
-installer, then the manifest and its `.sig` last, and only then publishes it as the latest:
+installed launcher trusts publishes nothing), makes a draft release `v<version>`, uploads the jars and the
+installers, then the manifest and its `.sig` last, and only then publishes it as the latest:
 `releases/latest/download/manifest.json` is what every installed launcher fetches (`Updater`), and
 `releases/download/v<version>/<jar>` is where each file is.
 

@@ -97,6 +97,28 @@ jobs:
           path: launcher/build/installer/OdinsGate-Setup.exe
           if-no-files-found: error
 
+  # The Mac disk images, one per chip (launcher/README.md, "Installers"): the app image, its self-test and scan, the
+  # disk image, and a copy of the app from it self-tested as a friend would run it.
+  installer-mac:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            chip: arm64
+          - os: macos-15-intel
+            chip: x64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/mac-installer
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OdinsGate-mac-${{ matrix.chip }}
+          path: launcher/build/installer/OdinsGate-mac-${{ matrix.chip }}.dmg
+          if-no-files-found: error
+
   # The VM's launch scripts: the parts that need no VM, run with PowerShell 7 on Linux.
   launch-scripts:
     runs-on: ubuntu-latest

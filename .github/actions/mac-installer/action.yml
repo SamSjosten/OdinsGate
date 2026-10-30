@@ -1,0 +1,54 @@
+name: Mac disk image
+description: >-
+  Builds the Odin's Gate app image and its disk image on a Mac runner, for the runner's own chip
+  (launcher/package.gradle), runs the image's --self-test and the image scan, then opens the disk image, copies the
+  app into the runner's Applications folder as a friend would, runs the installed app's --self-test and removes it.
+  The disk image is left at launcher/build/installer/OdinsGate-mac-<chip>.dmg for the caller to upload
+  (launcher/README.md, "Installers").
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-java@v4
+      with:
+        distribution: temurin
+        java-version: "21"
+    - uses: gradle/actions/setup-gradle@v4
+    # Not `build`: the unit tests run in build.yml's launcher jobs. What is checked here is the image and the disk
+    # image, from the real executable.
+    - name: The app image, its self-test and scan, and the disk image
+      shell: bash
+      run: ./gradlew -p launcher appImageSelfTest appImageScan macDmg
+    - name: Open the disk image, copy the app to Applications, self-test it, remove it
+      shell: bash
+      run: |
+        set -euo pipefail
+        dmg=$(ls launcher/build/installer/OdinsGate-mac-*.dmg)
+        echo "$dmg is $(du -m "$dmg" | cut -f1) MB"
+        mount="$RUNNER_TEMP/odinsgate-dmg"
+        hdiutil attach "$dmg" -mountpoint "$mount" -nobrowse -readonly -quiet
+        ls -la "$mount"
+        mkdir -p "$HOME/Applications"
+        rm -rf "$HOME/Applications/OdinsGate.app"
+        cp -R "$mount/OdinsGate.app" "$HOME/Applications/"
+        hdiutil detach "$mount" -quiet
+        app="$HOME/Applications/OdinsGate.app"
+        # The bundle's version as package.gradle maps it: a launcher at 0.x.y is bundled as 1.x.y, since macOS
+        # wants a first number above zero; from 1.0.0 on the two agree.
+        version=$(tr -d '[:space:]' < launcher/version.txt)
+        case $version in 0.*) expected="1${version#0}" ;; *) expected=$version ;; esac
+        shown=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")
+        if [[ $shown != "$expected" ]]; then
+          echo "the app's Info.plist says version $shown, not $expected (launcher $version)"
+          exit 1
+        fi
+        echo "the app is bundled as version $shown (launcher $version)"
+        codesign --verify --deep --strict --verbose=2 "$app" 2>&1 | tail -3 || echo "(not signed for real yet)"
+        data="$RUNNER_TEMP/odinsgate-installed-self-test"
+        code=0
+        "$app/Contents/MacOS/OdinsGate" --self-test --home "$data" || code=$?
+        if [[ $code -ne 0 ]]; then
+          echo "the installed app's self-test exited with $code"
+          exit "$code"
+        fi
+        rm -rf "$app"
+        echo 'copied from the disk image, self-tested and removed'
