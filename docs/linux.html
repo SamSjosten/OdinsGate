@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Odin's Gate on Linux</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main>
+<nav><a href="index.html">Odin's Gate</a> &rsaquo; Linux</nav>
+<h1>Linux</h1>
+
+<h2>Install</h2>
+<p>Download <a href="https://github.com/SamSjosten/OSRSPS/releases/latest/download/OdinsGate-linux-x64.tar.gz">OdinsGate-linux-x64.tar.gz</a>
+(x86-64 only) and extract it anywhere, for example in your home folder:</p>
+<pre><code>tar -xzf OdinsGate-linux-x64.tar.gz</code></pre>
+<p>That makes an <code>OdinsGate</code> folder with everything in it, its own Java included. Nothing is installed and
+no root is needed. Run</p>
+<pre><code>OdinsGate/bin/OdinsGate</code></pre>
+<p>or double-click that file in a file manager that runs programs. It needs a desktop (X11, or Wayland with
+XWayland) and the usual desktop libraries, which Ubuntu, Fedora and their relatives have.</p>
+
+<h2>Play</h2>
+<p>Press <b>Play</b>. The first start downloads the game client, about a minute; after that the game is up in
+seconds. Log in with a name and password you make up for this server, never the login of any other game or
+account; the first login with a name claims it.</p>
+
+<h2>Updates</h2>
+<p>The launcher updates itself when Sam publishes a new version. If it ever says "Please download the new installer",
+come back to the <a href="index.html">download page</a>, extract the new archive over the old folder (or next to it)
+and run that one.</p>
+
+<h2>Where its files are, and uninstalling</h2>
+<p>Its settings and the game client are under <code>$XDG_DATA_HOME/odinsgate</code>, normally
+<code>~/.local/share/odinsgate</code>. To remove it, delete the <code>OdinsGate</code> folder and that one.</p>
+
+<h2>Problems</h2>
+<p>Press <b>Copy problem report</b> in the launcher and paste it to Sam. It holds the launcher's log and what it
+found out about the server, nothing from the rest of your machine.</p>
+</main>
+</body>
+</html>

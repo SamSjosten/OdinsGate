@@ -58,8 +58,11 @@ public final class Updater
 {
 	/** Where the release assets live; {@code latest/download/<asset>} follows GitHub's redirect to the newest. */
 	static final String RELEASES = "https://github.com/SamSjosten/OSRSPS/releases";
-	/** The page a friend is sent to for a new installer: built in, never taken from the network. */
-	static final URI DOWNLOAD_PAGE = URI.create(RELEASES + "/latest");
+	/**
+	 * The page a friend is sent to for a new installer: the download page (docs/ in the repo, served by GitHub
+	 * Pages, one button per system), built in, never taken from the network.
+	 */
+	static final URI DOWNLOAD_PAGE = URI.create("https://samsjosten.github.io/OSRSPS/");
 	static final String MANIFEST_NAME = "manifest.json";
 	static final String SIGNATURE_SUFFIX = ".sig";
 	/** A manifest and signature on their way into place, written whole before either moves. */
