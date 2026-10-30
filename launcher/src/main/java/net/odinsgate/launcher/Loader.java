@@ -26,7 +26,8 @@ import javax.swing.UIManager;
  * --jar &lt;path&gt;...       the pinned jars, in bootstrap order (the launcher has hashed them already)
  * --modulus &lt;hex&gt;       the server's RSA key
  * --port &lt;n&gt;            the game port the client must dial
- * --allow &lt;host:port&gt;... the endpoints the game may reach: our server's game and HTTP ports
+ * --allow &lt;host:port&gt;... the endpoints the game may reach: our server's game and HTTP ports, and RuneLite's own
+ *                       Plugin Hub and static data servers
  * --main &lt;class&gt;        RuneLite's main class
  * --                    everything after it is RuneLite's own command line
  * --self-test           first: no jars, no RuneLite; the guard is set for the --allow endpoints, the first is reached
@@ -41,6 +42,14 @@ public final class Loader
 {
 	public static final String RUNELITE_MAIN = "net.runelite.client.RuneLite";
 	public static final String SELF_TEST = "--self-test";
+	/**
+	 * RuneLite's own servers the game may reach besides ours (Sam's decision, 2026-10-30): the Plugin Hub
+	 * ({@code repo.runelite.net}: its signed plugin list and the plugin jars) and the static data
+	 * ({@code static.runelite.net}: item and NPC stats). Both are RuneLite's, never the game publisher's; RuneLite
+	 * checks the hub's signature itself. Its API ({@code api.runelite.net}) is not needed: the world list, prices and
+	 * the rest of {@code runelite.http-service.url} come from our server.
+	 */
+	public static final List<String> RUNELITE_ENDPOINTS = List.of("repo.runelite.net:443", "static.runelite.net:443");
 	public static final String SELF_TEST_OK = "[loader] self-test ok";
 	/** A host no packet should ever leave for (TEST-NET-1, never routed): what the guard must refuse on the spot. */
 	static final String NOWHERE = "192.0.2.1";
@@ -62,7 +71,7 @@ public final class Loader
 
 	/**
 	 * The loader's arguments for {@link ClientCommand.Spec#loaderArgs()}: what {@link #parse} reads back. The game
-	 * may reach the server's two ports and nothing else.
+	 * may reach the server's two ports and {@link #RUNELITE_ENDPOINTS}, and nothing else.
 	 */
 	public static List<String> arguments(List<Path> jars, Manifest.Server server, String mainClass)
 	{
@@ -80,6 +89,11 @@ public final class Loader
 		args.add(server.host() + ":" + server.gamePort());
 		args.add("--allow");
 		args.add(server.host() + ":" + server.httpPort());
+		for (String endpoint : RUNELITE_ENDPOINTS)
+		{
+			args.add("--allow");
+			args.add(endpoint);
+		}
 		args.add("--main");
 		args.add(mainClass);
 		return List.copyOf(args);

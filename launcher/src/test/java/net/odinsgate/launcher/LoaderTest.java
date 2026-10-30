@@ -97,7 +97,9 @@ public class LoaderTest
 		assertEquals(jars, options.jars());
 		assertEquals(FakeClient.OUR_MODULUS, options.modulus());
 		assertEquals(44594, options.gamePort());
-		assertEquals(ALLOWED, options.allowed(), "the server's two ports are what the game may reach");
+		assertEquals(List.of("odinsgate.net:44594", "odinsgate.net:44595", "repo.runelite.net:443",
+			"static.runelite.net:443"), options.allowed(),
+			"the server's two ports and RuneLite's Plugin Hub and static data are what the game may reach");
 		assertEquals(Loader.RUNELITE_MAIN, options.mainClass());
 		assertEquals(
 			List.of("--jav_config", "http://odinsgate.net:43595/launcher/jav_config.ws", "--disable-telemetry"),
