@@ -260,10 +260,10 @@ Friends install one file for their system and nothing else: the installer carrie
   self-test child in this JVM. On Linux, `appImageSelfTest appImageScan linuxTarball` build and prove the whole
   image and its archive here; CI adds the run from the extracted copy.
 
-Not yet: `SHA256SUMS` over the installers, a Mac
-run of the real client (PR 21), the test VMs running the client through an installed launcher instead of
-installDist's layout, and a manifest bundled in the image for a first start with no internet (the first start
-fetches RuneLite anyway).
+Not yet: `SHA256SUMS` over the installers, a Mac run of the real client (PR 21), the test VMs running the client
+through an installed launcher instead of installDist's layout, a manifest bundled in the image for a first start
+with no internet (the first start fetches RuneLite anyway), and a launcher that fetches the manifest again on Retry
+after "The server was updated" (today it has to be closed and reopened).
 
 ## Releases
 
@@ -322,10 +322,13 @@ and the launcher keeps them on the pinned build. Then:
    server"): a test VM runs the launcher and the test-runner examples against it, and CI runs the headless tests and
    the cache checks.
 4. Shortly before merging, post a notice through the server's notice file (the window section above), so friends in
-   game see it coming.
+   game see it coming, and that a launcher open since before PR A's release needs closing and reopening (step 5).
 5. Merge PR B. The deploy switches the server and cache in 1-3 minutes; the server refuses to start on a cache of
-   another revision, so 242 code never runs on a 241 cache. Friends in game are disconnected by the restart; the
-   launcher, still open, shows "The server was updated" and a click restarts the game on the 242 client. RSProx
-   friends restart RSProx.
+   another revision, so 242 code never runs on a 241 cache. Friends in game are disconnected by the restart. The
+   launcher reads the manifest once, when it starts (`Main`, `Updater.update`), and keeps it for the session, so a
+   launcher opened after PR A's release knows the 242 pin: Play checks the server, finds 242 pinned and starts the
+   242 client. One open since before that release doesn't: it shows "The server was updated" with "this launcher
+   doesn't know revision 242 yet", and Retry asks the same manifest again, so the friend closes and reopens the
+   launcher, which starts with the manifest that has the pin. RSProx friends restart RSProx.
 6. Rollback: revert PR B and swap the cache back as `deploy/README.md` describes (the old cache is kept in
    `data/cache.previous`). Friends go back to the 241 pin, still in their cache.
