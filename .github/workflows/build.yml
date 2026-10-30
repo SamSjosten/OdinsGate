@@ -8,8 +8,48 @@ on:
   # push made with a workflow's own token.
   workflow_dispatch:
 
+# The jobs' names are the checks the ruleset on main requires: a job split up keeps its name on a job that waits for
+# the parts (`build`), and a job that sits a change out is skipped, which counts as passing. A skipped matrix job
+# shows under the job's bare name instead of each matrix name, so installer-mac runs and skips its steps instead.
 jobs:
-  build:
+  # Which parts of the repository the change touches, against main (the pull request's base): the launcher and
+  # installer jobs, tick-recorder and test-runner sit out a change that touches nothing they build from. A push to main
+  # runs everything, so main's artifacts and Gradle caches are always whole.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      launcher: ${{ steps.paths.outputs.launcher }}
+      tick-recorder: ${{ steps.paths.outputs.tick-recorder }}
+      test-runner: ${{ steps.paths.outputs.test-runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: paths
+        env:
+          BASE: ${{ github.base_ref || 'main' }}
+        run: |
+          set -euo pipefail
+          if [[ $GITHUB_EVENT_NAME == push ]]; then
+            printf '%s\n' launcher=true tick-recorder=true test-runner=true | tee -a "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          changed=$(git diff --name-only "origin/$BASE...HEAD")
+          printf '%s\n' "$changed"
+          shared='^(gradle/|gradlew|\.github/workflows/build\.yml$|\.github/actions/)'
+          touches() { if grep -qE "$1|$shared" <<<"$changed"; then echo true; else echo false; fi; }
+          {
+            echo "launcher=$(touches '^launcher/|^src/main/resources/(runelite-pins\.json|rsa-modulus\.txt)$')"
+            echo "tick-recorder=$(touches '^tick-recorder/')"
+            echo "test-runner=$(touches '^test-runner/')"
+          } | tee -a "$GITHUB_OUTPUT"
+
+  # The server's tests in five parts at once (build.gradle.kts, -PtestShard), each with the whole build around them.
+  server-tests:
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -18,7 +58,21 @@ jobs:
           distribution: temurin
           java-version: "21"
       - uses: gradle/actions/setup-gradle@v4
-      - run: ./gradlew build
+      - run: ./gradlew build --build-cache -PtestShard=${{ matrix.shard }}/5
+
+  # The server's build and every one of its tests: passes when each part above did. Also fails when `changes` did,
+  # since the jobs that wait on it would be skipped, and a skipped job counts as passing.
+  build:
+    needs: [changes, server-tests]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          CHANGES: ${{ needs.changes.result }}
+          TESTS: ${{ needs.server-tests.result }}
+        run: |
+          echo "changes: $CHANGES, server-tests: $TESTS"
+          [[ $CHANGES == success && $TESTS == success ]]
 
   # The server VM's scripts: the deploy of main and the staging server, each played through on a made-up origin with a
   # stand-in for docker.
@@ -61,6 +115,8 @@ jobs:
       - run: node .github/scripts/launcher-version.js "origin/${{ github.base_ref || 'main' }}" HEAD
 
   launcher:
+    needs: changes
+    if: needs.changes.outputs.launcher == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -69,7 +125,7 @@ jobs:
           distribution: temurin
           java-version: "21"
       - uses: gradle/actions/setup-gradle@v4
-      - run: ./gradlew -p launcher build
+      - run: ./gradlew -p launcher build --build-cache
       # The installed layout (bin/ and lib/), what the test VM runs from C:\RSPS\launcher\app.
       - uses: actions/upload-artifact@v4
         with:
@@ -79,6 +135,8 @@ jobs:
 
   # The launcher's tests on Windows, where friends run it: the same build as above, with nothing uploaded.
   launcher-windows:
+    needs: changes
+    if: needs.changes.outputs.launcher == 'true'
     runs-on: windows-latest
     timeout-minutes: 20
     steps:
@@ -89,12 +147,14 @@ jobs:
           java-version: "21"
       - uses: gradle/actions/setup-gradle@v4
       - shell: bash
-        run: ./gradlew -p launcher build
+        run: ./gradlew -p launcher build --build-cache
 
   # The Windows installer (launcher/README.md, "Installers"): the app image over a runtime that keeps bin/java, the
   # installer around it, the image's self-test and scan, and an install, self-test and uninstall of the installer on
   # the runner. The artifact is the installer, which a test VM installs.
   installer-windows:
+    needs: changes
+    if: needs.changes.outputs.launcher == 'true'
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
@@ -117,12 +177,18 @@ jobs:
             chip: arm64
           - os: macos-15-intel
             chip: x64
+    needs: changes
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
+    env:
+      RUN: ${{ needs.changes.outputs.launcher }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/mac-installer
-      - uses: actions/upload-artifact@v4
+      - if: env.RUN == 'true'
+        uses: actions/checkout@v4
+      - if: env.RUN == 'true'
+        uses: ./.github/actions/mac-installer
+      - if: env.RUN == 'true'
+        uses: actions/upload-artifact@v4
         with:
           name: OdinsGate-mac-${{ matrix.chip }}
           path: launcher/build/installer/OdinsGate-mac-${{ matrix.chip }}.dmg
@@ -131,6 +197,8 @@ jobs:
   # The Linux archive (launcher/README.md, "Installers"): the app image, its self-test and scan, the tar.gz, and a
   # copy extracted from it self-tested under a virtual display, so the window opens on a runner too.
   installer-linux:
+    needs: changes
+    if: needs.changes.outputs.launcher == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -150,6 +218,8 @@ jobs:
       - run: pwsh -NoProfile -File test-runner/launch/start-client-functions.tests.ps1
 
   tick-recorder:
+    needs: changes
+    if: needs.changes.outputs.tick-recorder == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -158,7 +228,7 @@ jobs:
           distribution: temurin
           java-version: "21"
       - uses: gradle/actions/setup-gradle@v4
-      - run: ./gradlew -p tick-recorder build
+      - run: ./gradlew -p tick-recorder build --build-cache
       - uses: actions/upload-artifact@v4
         with:
           name: tick-recorder-jar
@@ -166,6 +236,8 @@ jobs:
           if-no-files-found: error
 
   test-runner:
+    needs: changes
+    if: needs.changes.outputs.test-runner == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -174,7 +246,7 @@ jobs:
           distribution: temurin
           java-version: "21"
       - uses: gradle/actions/setup-gradle@v4
-      - run: ./gradlew -p test-runner build
+      - run: ./gradlew -p test-runner build --build-cache
       - uses: actions/upload-artifact@v4
         with:
           name: test-runner-jar
