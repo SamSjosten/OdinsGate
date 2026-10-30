@@ -18,8 +18,8 @@ The core that later PRs build on; no window or releases yet:
   is strict because every value is used somewhere dangerous; unknown members are ignored so old launchers survive
   additions, and a new `format` means "please download the new installer".
 - `Signatures` and `TrustedKeys`: Ed25519 verification against the pinned public keys (a primary and Sam's offline
-  backup). The production list is empty until the release PR ships the real public halves; the keys themselves are
-  made on Sam's own PC, never in a session or a VM, and tests make throwaway pairs of their own.
+  backup). The production list holds the real public halves since the 1.0.0 release; the keys themselves were made
+  on Sam's own PC, never in a session or a VM, and tests make throwaway pairs of their own.
 - `ServerCheck`: the pre-Play check, with 5-second timeouts and at most three connections per try (far under the
   relay's 20 new connections a minute): `/status.json`, the game port, and the served key from `/proxy-targets.yaml`.
   Outcomes: ready, server offline (GitHub answers, our server doesn't), server full (up, but not taking logins), no
@@ -160,8 +160,8 @@ The core that later PRs build on; no window or releases yet:
   crash) before the hand-off and the version writes `.healthy` once its window is up or its steps under way; a
   version started and never healthy at the next run (a crash), or not healthy within the watchdog's sixty seconds
   (a hang), or that can't load at all, goes on `<data>/bad-versions.txt`: never run or downloaded again, until a
-  newer version is released. GitHub is given twenty seconds for each whole answer, headers and body. Until the
-  release PR ships the public keys, `TrustedKeys` is empty and a run without `--manifest` says so and stops. The
+  newer version is released. GitHub is given twenty seconds for each whole answer, headers and body. A build
+  with an empty `TrustedKeys` (none since 1.0.0) says so at a run without `--manifest` and stops. The
   tests run the updater against a fake GitHub with throwaway keys, one per failure: a tampered manifest, an older
   one, a crash or a hang before healthy, a bad version offered again, a corrupt pointer, a 404, a missing jar, a
   held file, the backup key naming a new primary, and an unsigned "please reinstall"; the loader runs ASM-built
@@ -300,8 +300,8 @@ installers, then the manifest and its `.sig` last, and only then publishes it as
      click per release), and the secret `RELEASE_SIGNING_KEY` holding the whole text of `release-primary.pem`. The
      workflow names the Environment, so GitHub would make an unprotected one at the first release if it isn't there.
   3. A pull request that puts both public halves into `TrustedKeys.SPKI_BASE64` (primary first, backup last) and
-     bumps `version.txt`: its merge is the first release. Until then every real run stops at `verify` with "no
-     release keys are built into this launcher yet", and the test VM keeps running from `--manifest`.
+     bumps `version.txt`: its merge is the first release (done 2026-10-30, version 1.0.0). Before it every real run
+     stopped at `verify` with "no release keys are built into this launcher yet".
   4. `.github/CODEOWNERS` names Sam for `.github/workflows/`, so a change to the release path asks for his review.
 - A release that turns out broken ships again as a new, higher version: the updater never downgrades. A primary key
   lost or leaked: a manifest signed by the backup key names a new primary in `keys.primary`, and the next release's
