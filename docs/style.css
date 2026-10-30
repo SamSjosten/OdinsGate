@@ -1,0 +1,51 @@
+/* The friend download page and its guides: one small stylesheet, no scripts, readable on a phone. */
+:root {
+	--bg: #f7f5f0;
+	--ink: #1f1d1a;
+	--muted: #5c574f;
+	--line: #d9d4ca;
+	--button: #2f4f3f;
+	--button-ink: #ffffff;
+	--code: #ece8df;
+}
+@media (prefers-color-scheme: dark) {
+	:root {
+		--bg: #1b1a18;
+		--ink: #ece8df;
+		--muted: #a8a295;
+		--line: #3a3732;
+		--button: #6fae8f;
+		--button-ink: #10140f;
+		--code: #2a2825;
+	}
+}
+* { box-sizing: border-box; }
+body {
+	margin: 0;
+	background: var(--bg);
+	color: var(--ink);
+	font: 17px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+main { max-width: 42rem; margin: 0 auto; padding: 2rem 1rem 4rem; }
+h1 { font-size: 2.2rem; margin: 0 0 0.5rem; }
+h2 { font-size: 1.3rem; margin: 2rem 0 0.5rem; }
+p, li { margin: 0.4rem 0; }
+.lead { font-size: 1.1rem; color: var(--muted); }
+.downloads { display: grid; grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); gap: 0.8rem; margin: 1.5rem 0 0.8rem; }
+.button {
+	display: block;
+	padding: 0.9rem 1rem;
+	border-radius: 0.6rem;
+	background: var(--button);
+	color: var(--button-ink);
+	text-decoration: none;
+}
+.button span { display: block; font-weight: 600; }
+.button small { display: block; opacity: 0.85; }
+.hint { color: var(--muted); font-size: 0.95rem; }
+code { background: var(--code); padding: 0.1rem 0.3rem; border-radius: 0.3rem; font-size: 0.95em; }
+pre { background: var(--code); padding: 0.8rem; border-radius: 0.5rem; overflow-x: auto; }
+pre code { background: none; padding: 0; }
+nav { font-size: 0.95rem; color: var(--muted); }
+footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line); color: var(--muted); font-size: 0.95rem; }
+a { color: inherit; }
