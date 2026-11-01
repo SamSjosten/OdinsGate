@@ -33,6 +33,11 @@ final class ProblemReport
 	static final Pattern SECRET =
 		Pattern.compile("password|passwd|secret|token|authorization", Pattern.CASE_INSENSITIVE);
 	static final String LEFT_OUT = "[a line that may hold a password was left out]";
+	/**
+	 * A user's home folder on Windows, macOS or Linux, whose name is often the person's own: the name runs to the
+	 * next separator or quote, spaces and apostrophes included. The same as the server's second scrub.
+	 */
+	static final Pattern HOME_FOLDER = Pattern.compile("(?i)([A-Z]:[\\\\/]+Users[\\\\/]+|/Users/|/home/)[^\\\\/\"]+");
 
 	private ProblemReport()
 	{
@@ -104,8 +109,12 @@ final class ProblemReport
 		String folder = dataDir.toString();
 		StringBuilder scrubbed = new StringBuilder();
 		text.lines().forEach(line -> scrubbed.append(scrub(line, folder)).append('\n'));
+		// The cut never splits a character made of two chars (an emoji): half of one can't be written as UTF-8.
+		int cut = Character.isLowSurrogate(scrubbed.length() > WHAT_HAPPENED_CHARS ? scrubbed.charAt(WHAT_HAPPENED_CHARS) : 'x')
+			? WHAT_HAPPENED_CHARS - 1
+			: WHAT_HAPPENED_CHARS;
 		String kept = scrubbed.length() > WHAT_HAPPENED_CHARS
-			? scrubbed.substring(0, WHAT_HAPPENED_CHARS) + "\n"
+			? scrubbed.substring(0, cut) + "\n"
 			: scrubbed.toString();
 		StringBuilder section = new StringBuilder("\n").append(WHAT_HAPPENED).append('\n').append(kept);
 		int steps = report.indexOf("\n== ");
@@ -180,7 +189,8 @@ final class ProblemReport
 
 	/**
 	 * A line as it goes into the report: whole, unless it may hold a password, then a note in its place; the data
-	 * folder, which carries the friend's user name on most systems, becomes {@code <data>}.
+	 * folder, which carries the friend's user name on most systems, becomes {@code <data>}, and any other home
+	 * folder's name (a path the friend pastes, a log line about Downloads) becomes {@code <user>}.
 	 */
 	static String scrub(String line, String folder)
 	{
@@ -188,6 +198,7 @@ final class ProblemReport
 		{
 			return LEFT_OUT;
 		}
-		return folder.isEmpty() ? line : line.replace(folder, "<data>");
+		String kept = folder.isEmpty() ? line : line.replace(folder, "<data>");
+		return HOME_FOLDER.matcher(kept).replaceAll("$1<user>");
 	}
 }

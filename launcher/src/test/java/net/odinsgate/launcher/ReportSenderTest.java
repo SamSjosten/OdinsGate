@@ -89,11 +89,13 @@ public class ReportSenderTest
 	public void aReportIsInTheOutboxWhileItIsBeingSent() throws Exception
 	{
 		// A server that holds its answer: a launcher closed now must still find the report at its next start.
+		CountDownLatch asked = new CountDownLatch(1);
 		CountDownLatch answer = new CountDownLatch(1);
 		server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
 		server.createContext(ReportSender.PATH, exchange ->
 		{
 			exchange.getRequestBody().readAllBytes();
+			asked.countDown();
 			try
 			{
 				answer.await();
@@ -112,13 +114,16 @@ public class ReportSenderTest
 		ReportSender.Outcome[] outcome = new ReportSender.Outcome[1];
 		Thread sending = new Thread(() -> outcome[0] = sender.send("report", NOW));
 		sending.start();
-		for (int i = 0; i < 500 && sender.waiting().isEmpty(); i++)
+		try
 		{
-			Thread.sleep(10);
+			asked.await();
+			assertEquals(1, sender.waiting().size(), "kept before the server answered");
 		}
-		assertEquals(1, sender.waiting().size(), "kept before the server answered");
-		answer.countDown();
-		sending.join();
+		finally
+		{
+			answer.countDown();
+			sending.join();
+		}
 		assertEquals(new ReportSender.Outcome.Sent("R-0009"), outcome[0]);
 		assertEquals(List.of(), sender.waiting(), "gone once it was sent");
 	}
