@@ -127,14 +127,31 @@ public final class LauncherWindow
 	 */
 	static boolean noManifest(String why, PrintStream log)
 	{
+		javax.swing.JOptionPane pane = noManifestPane(why);
+		javax.swing.JDialog dialog = pane.createDialog(null, Names.APP_NAME);
+		dialog.setVisible(true);
+		dialog.dispose();
+		return choseTryAgain(pane.getValue());
+	}
+
+	static final String TRY_AGAIN = "Try again";
+	static final String CLOSE = "Close";
+
+	/** The no-manifest question: the reason as plain text (never HTML), Try again first and the default. */
+	static javax.swing.JOptionPane noManifestPane(String why)
+	{
 		javax.swing.JLabel text = new javax.swing.JLabel();
 		text.putClientProperty(LauncherPanel.HTML_OFF, Boolean.TRUE);
 		text.setText(Names.APP_NAME + " can't start yet: " + why);
-		String[] choices = {"Try again", "Close"};
-		int chosen = javax.swing.JOptionPane.showOptionDialog(null, text, Names.APP_NAME,
-			javax.swing.JOptionPane.DEFAULT_OPTION, javax.swing.JOptionPane.WARNING_MESSAGE, null, choices,
-			choices[0]);
-		return chosen == 0;
+		String[] choices = {TRY_AGAIN, CLOSE};
+		return new javax.swing.JOptionPane(text, javax.swing.JOptionPane.WARNING_MESSAGE,
+			javax.swing.JOptionPane.DEFAULT_OPTION, null, choices, TRY_AGAIN);
+	}
+
+	/** What the pane's value means: Try again only when that button was pressed; Close or the window's X close. */
+	static boolean choseTryAgain(Object value)
+	{
+		return TRY_AGAIN.equals(value);
 	}
 
 	static void stop(ScheduledExecutorService pool)

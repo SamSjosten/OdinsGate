@@ -10,10 +10,12 @@ import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.attribute.FileTime;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.PublicKey;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HexFormat;
@@ -37,6 +39,8 @@ public final class RuneLiteCache
 	/** Where RuneLite keeps every release's bootstrap.json; the pin names the commit. */
 	public static final String DEFAULT_STATIC_BASE = "https://raw.githubusercontent.com/runelite/static.runelite.net/";
 
+	/** How long a pin folder no manifest names is kept after its last use, for other windows still holding it. */
+	static final Duration RECENTLY_USED = Duration.ofDays(7);
 	/** The slowest download a jar is waited for, in bytes a second (32 KiB). */
 	static final long SLOWEST_BYTES_PER_SECOND = 32 * 1024;
 
@@ -125,11 +129,22 @@ public final class RuneLiteCache
 			}
 			classpath.add(jar);
 		}
+		// Marks the pin used, so a prune from another window spares it (see prune).
+		Files.setLastModifiedTime(dir, FileTime.from(Instant.now()));
 		return List.copyOf(classpath);
 	}
 
-	/** Deletes every pin folder but these, keeping the current pin and the one before it, as the plan says. */
+	/**
+	 * Deletes every pin folder but these and those used within {@link #RECENTLY_USED}: another launcher window on
+	 * the same data folder, from an older or newer release, may hold a pin it fetched and is about to play.
+	 */
 	public void prune(Set<String> keepCommits) throws IOException
+	{
+		prune(keepCommits, Instant.now().minus(RECENTLY_USED));
+	}
+
+	/** {@link #prune(Set)} with the cut-off given: a pin folder last used before it, and not kept, goes. */
+	void prune(Set<String> keepCommits, Instant usedBefore) throws IOException
 	{
 		if (!Files.isDirectory(root))
 		{
@@ -139,7 +154,8 @@ public final class RuneLiteCache
 		{
 			for (Path pin : pins)
 			{
-				if (!keepCommits.contains(pin.getFileName().toString()))
+				if (!keepCommits.contains(pin.getFileName().toString())
+					&& Files.getLastModifiedTime(pin).toInstant().isBefore(usedBefore))
 				{
 					deleteTree(pin);
 				}

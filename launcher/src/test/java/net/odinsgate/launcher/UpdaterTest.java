@@ -695,6 +695,22 @@ public class UpdaterTest
 	}
 
 	@Test
+	public void aRecoveryManifestThatCantBeKeptIsNeverHandedToADownloadedVersion() throws Exception
+	{
+		release(PRIMARY, "0.2.0", Map.of("a.jar", JAR_A));
+		assertEquals("0.2.0", run(updater("0.1.0").update()).version());
+		// The backup's recovery release, with its jar, but the kept pair can't be written: a non-empty folder
+		// stands where the new signature goes. The old primary's manifest is still at the kept path.
+		release(BACKUP, "0.3.0", "0.1.0", Map.of("b.jar", JAR_B), spki(NEW_PRIMARY));
+		Files.createDirectories(data.resolve("manifest.json.new.sig").resolve("x"));
+		Updater.Run run = run(updater("0.1.0").update());
+		assertTrue(logText().contains("could not be kept"), logText());
+		assertTrue(run.installed(), "no hand-off, which would pass the old primary's file: " + run.version());
+		assertEquals("0.3.0", run.manifest().version, "the installed launcher runs on the recovery manifest");
+		assertEquals(0, fetchesOf("b.jar"), "nothing is downloaded that couldn't be run");
+	}
+
+	@Test
 	public void aNamedPrimaryKeyIsTrustedThisRunEvenWhenTheKeysFileCantBeWritten() throws Exception
 	{
 		// A non-empty folder where the file goes: the write fails.

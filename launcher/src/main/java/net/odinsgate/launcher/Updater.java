@@ -380,6 +380,8 @@ public final class Updater
 				}
 			}
 		}
+		// Whether a downloaded version may be run: it is handed the kept file, never the manifest in memory.
+		boolean handOff = true;
 		if (remote != null && (onDisk == null || !Arrays.equals(onDisk.bytes(), remote.bytes())))
 		{
 			try
@@ -389,10 +391,20 @@ public final class Updater
 			}
 			catch (IOException e)
 			{
-				// What a downloaded version is handed is the kept file, so what can't be kept isn't followed.
+				// What a downloaded version is handed is the kept file, so what can't be kept isn't followed. With
+				// nothing accepted to fall back on, the installed launcher runs on the manifest in memory: the file
+				// still at the kept path may be one this run no longer trusts (a key rotation's revoked primary).
 				log.println("[updater] the release manifest could not be kept: " + e.getMessage()
-					+ (stored == null ? "" : ": the accepted " + stored.manifest().version + " stands"));
-				remote = stored == null ? remote : null;
+					+ (stored == null ? ": only the installed launcher runs" : ": the accepted "
+					+ stored.manifest().version + " stands"));
+				if (stored == null)
+				{
+					handOff = false;
+				}
+				else
+				{
+					remote = null;
+				}
 			}
 		}
 		Loaded accepted = remote;
@@ -415,6 +427,10 @@ public final class Updater
 		{
 			return new NeedsInstaller("this launcher is version " + shellVersion + " and the release needs "
 				+ manifest.minBootstrapVersion + " or newer");
+		}
+		if (!handOff)
+		{
+			return installed(accepted, " (the manifest isn't kept, so no downloaded version runs)");
 		}
 		String target = manifest.version;
 		if (Versions.isNewer(target, shellVersion) && !isBad(target))
@@ -455,14 +471,19 @@ public final class Updater
 		}
 		if (chosen == null || Versions.compare(shellVersion, chosen) >= 0)
 		{
-			log.println("[updater] running the installed launcher " + shellVersion
-				+ (chosen == null ? "" : " (newer than " + chosen + ")") + " with manifest "
-				+ accepted.manifest().version);
-			return new Run(shellVersion, null, List.of(), accepted.manifest(), accepted.file());
+			return installed(accepted, chosen == null ? "" : " (newer than " + chosen + ")");
 		}
 		log.println("[updater] running version " + chosen + " with manifest " + accepted.manifest().version);
 		return new Run(chosen, versionDir(chosen), jarsOf(chosen, verified.get(chosen)), accepted.manifest(),
 			accepted.file());
+	}
+
+	/** The installed launcher's own run, with {@code accepted} as its manifest; {@code why} goes in the log. */
+	private Run installed(Loaded accepted, String why)
+	{
+		log.println("[updater] running the installed launcher " + shellVersion + why + " with manifest "
+			+ accepted.manifest().version);
+		return new Run(shellVersion, null, List.of(), accepted.manifest(), accepted.file());
 	}
 
 	/** The jars {@code version}'s own signed manifest {@code kept} names, under its folder: the class path. */
