@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
@@ -117,5 +118,31 @@ public class ProblemReportTest
 			List.of("2026-10-29T19:29:00Z note: the password is hunter2"), dir, gameLog, dir.resolve("none"), AT);
 		assertFalse(report.contains("hunter2"), report);
 		assertTrue(report.contains("fine\n" + ProblemReport.LEFT_OUT + "\nalso fine\n"), report);
+	}
+
+	@Test
+	public void whatTheFriendWroteGoesAfterTheHeaderScrubbedAndCut()
+	{
+		Path data = Path.of("/home/jane/.local/share/OdinsGate");
+		String report = "Odin's Gate problem report, now\nlauncher 1.0.5\nrevision 241\n\n== last steps and checks ==\nstep\n";
+		assertEquals(report, ProblemReport.withWhatHappened(report, "  \n ", data), "nothing written, nothing added");
+		String with = ProblemReport.withWhatHappened(report,
+			"it froze\nmy password is hunter2\nsee " + data + "/logs", data);
+		assertEquals("Odin's Gate problem report, now\nlauncher 1.0.5\nrevision 241\n\n" + ProblemReport.WHAT_HAPPENED
+			+ "\nit froze\n" + ProblemReport.LEFT_OUT + "\nsee <data>/logs\n\n== last steps and checks ==\nstep\n", with);
+		String longer = ProblemReport.withWhatHappened(report, "x".repeat(ProblemReport.WHAT_HAPPENED_CHARS + 50), data);
+		assertTrue(longer.contains("x".repeat(ProblemReport.WHAT_HAPPENED_CHARS) + "\n\n=="), longer.length() + "");
+		// A cut that would fall inside the data folder's path comes after the scrub, so no piece of the name is left.
+		String split = ProblemReport.withWhatHappened(report,
+			"x".repeat(ProblemReport.WHAT_HAPPENED_CHARS - 10) + data + "/logs", data);
+		assertFalse(split.contains("/home/jan"), split);
+		// Another home folder the friend pastes loses its name too.
+		String pasted = ProblemReport.withWhatHappened(report,
+			"it failed opening /home/jane/Downloads/OdinsGate and C:\\Users\\Jane Doe\\Desktop", data);
+		assertTrue(pasted.contains("it failed opening /home/<user>/Downloads/OdinsGate and C:\\Users\\<user>\\Desktop\n"),
+			pasted);
+		// A cut that would fall inside an emoji keeps it whole or leaves it out, so the report can be written as UTF-8.
+		String emoji = ProblemReport.withWhatHappened(report, "x".repeat(ProblemReport.WHAT_HAPPENED_CHARS - 1) + "😀", data);
+		assertTrue(StandardCharsets.UTF_8.newEncoder().canEncode(emoji), "no half of a character is left");
 	}
 }

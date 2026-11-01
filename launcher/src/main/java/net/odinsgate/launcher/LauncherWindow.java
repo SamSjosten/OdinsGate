@@ -159,6 +159,46 @@ public final class LauncherWindow
 		pool.shutdown();
 	}
 
+	/** The data folder's folder where reports that couldn't be sent wait for the next start. */
+	static final String REPORTS_DIR = "reports";
+	static final String SEND = "Send";
+	static final String CANCEL = "Cancel";
+	static final String SEND_QUESTION = "What happened? (optional) The report holds the launcher's last steps and "
+		+ "the end of the game's logs, never your password.";
+
+	/**
+	 * The "Send problem report" button: asks what happened in a small box, and sends the report unless the friend
+	 * cancels. On the event thread.
+	 */
+	static void askAndSend(java.awt.Component parent, LauncherPanel panel, WindowRun run)
+	{
+		javax.swing.JTextArea words = new javax.swing.JTextArea(4, 40);
+		words.setLineWrap(true);
+		words.setWrapStyleWord(true);
+		javax.swing.JOptionPane pane = sendPane(words);
+		javax.swing.JDialog dialog = pane.createDialog(parent, Names.APP_NAME);
+		dialog.setVisible(true);
+		dialog.dispose();
+		if (!SEND.equals(pane.getValue()))
+		{
+			return;
+		}
+		panel.reportSending();
+		run.sendReport(words.getText(), panel::reportSent);
+	}
+
+	/** The send question: plain text (never HTML), a box to write in, Send first and the default. */
+	static javax.swing.JOptionPane sendPane(javax.swing.JTextArea words)
+	{
+		javax.swing.JLabel text = new javax.swing.JLabel();
+		text.putClientProperty(LauncherPanel.HTML_OFF, Boolean.TRUE);
+		text.setText(SEND_QUESTION);
+		Object[] message = {text, new javax.swing.JScrollPane(words)};
+		String[] choices = {SEND, CANCEL};
+		return new javax.swing.JOptionPane(message, javax.swing.JOptionPane.PLAIN_MESSAGE,
+			javax.swing.JOptionPane.DEFAULT_OPTION, null, choices, SEND);
+	}
+
 	/** The system's clipboard; on the event thread. */
 	static void toClipboard(String text)
 	{
@@ -196,9 +236,12 @@ public final class LauncherWindow
 		WindowRun[] run = new WindowRun[1];
 		LauncherPanel[] panel = new LauncherPanel[1];
 		panel[0] = new LauncherPanel(() -> run[0].play(), () -> run[0].retry(),
-			() -> run[0].copyReport(panel[0]::reportCopied));
+			() -> run[0].copyReport(panel[0]::reportCopied), () -> askAndSend(frame, panel[0], run[0]));
+		Manifest.Server server = session.server();
+		ReportSender sender = new ReportSender(server.host(), server.httpPort(),
+			session.dataDir().resolve(REPORTS_DIR));
 		run[0] = new WindowRun(new Screen(false, firstRun), session, steps::notice, WindowRun.Worker.threads(pool),
-			SwingUtilities::invokeLater, panel[0]::render, clock, LauncherWindow::toClipboard, system());
+			SwingUtilities::invokeLater, panel[0]::render, clock, LauncherWindow::toClipboard, system(), sender);
 		frame.setContentPane(panel[0]);
 		// The first view (the check under way, the first-run line when it applies) is drawn before the frame is
 		// sized, so the frame opens with room for it; what appears later (the notice, a detail) grows the frame.

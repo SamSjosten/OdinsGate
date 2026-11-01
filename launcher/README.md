@@ -127,7 +127,13 @@ The core that later PRs build on; no window or releases yet:
   system and chip, the launcher's version, the server's revision and its pin, the launcher's last forty steps and
   checks, and the last sixty lines of `game.log` and of RuneLite's own `client.log`. Never a password: a log line
   mentioning a password, token, secret or authorization is left out whole, the data folder (which carries the
-  friend's user name) is written as `<data>`, and the command line isn't in it. The tests flip a fake server's
+  friend's user name) is written as `<data>`, and the command line isn't in it. "Send problem report" (1.0.5) asks in a
+  small box what happened, puts that after the report's first lines (scrubbed the same way, at most 2,000
+  characters) and sends it to the server's `POST /report` on its HTTP port (`ReportSender`), which scrubs it again,
+  files it as an issue in the server repository and answers with its number, shown on the button. The launcher
+  holds no key or token: the server is the only place a report goes. A report the server can't take now (down,
+  a server too old to take reports (`404`), `429`, `5xx`) waits in `<data>/reports/` (the newest ten) and is sent again at the next start; one it refuses
+  (`400`, `413`) is dropped, and the button says to copy it instead. The tests flip a fake server's
   revision mid-session through the real `Session` and the hand-cranked driver, both for a pinned and an unpinned
   revision, and feed the report logs with passwords in them. On the VM, `OdinsGate.cmd` now sends the launcher's
   console to `logs\console.log`, since `logs\launcher.log` is the launcher's own.

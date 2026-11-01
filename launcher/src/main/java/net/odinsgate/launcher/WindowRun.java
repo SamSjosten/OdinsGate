@@ -96,6 +96,8 @@ public final class WindowRun
 	private final Clock clock;
 	private final Consumer<String> clipboard;
 	private final Map<String, String> system;
+	/** Where "Send problem report" sends to, or null when this window has no button for it (some tests). */
+	private final ReportSender sender;
 	/** What the last fetch gave, for the launch; written by the worker, read by it after the window's thread. */
 	private volatile Launch.Pin fetched;
 	/** The running game, for a restart; written by the worker, read on the window's thread. */
@@ -119,6 +121,15 @@ public final class WindowRun
 		UiThread ui, Consumer<Screen.View> render, Clock clock, Consumer<String> clipboard,
 		Map<String, String> system)
 	{
+		this(screen, session, notice, worker, ui, render, clock, clipboard, system, null);
+	}
+
+	/** @param sender where "Send problem report" sends to; reports it couldn't send are sent again at {@link #start} */
+	WindowRun(Screen screen, LauncherRun.Session session, Supplier<Optional<String>> notice, Worker worker,
+		UiThread ui, Consumer<Screen.View> render, Clock clock, Consumer<String> clipboard,
+		Map<String, String> system, ReportSender sender)
+	{
+		this.sender = sender;
 		this.screen = screen;
 		this.session = session;
 		this.notice = notice;
@@ -134,6 +145,10 @@ public final class WindowRun
 	public void start()
 	{
 		worker.run(this::fetchNotice);
+		if (sender != null)
+		{
+			worker.run(sender::resend);
+		}
 		List<Screen.Command> commands = screen.start();
 		render.accept(screen.view());
 		execute(commands);
@@ -161,11 +176,32 @@ public final class WindowRun
 	{
 		worker.run(() ->
 		{
-			String report = ProblemReport.build(session.platform(), system, version(), session.revision(),
-				session.pin(), session.recent(), session.dataDir(), session.gameLog(), session.clientLog(),
-				clock.instant());
+			String report = build();
 			ui.later(() -> paste(report, CLIPBOARD_TRIES, done));
 		});
+	}
+
+	/**
+	 * The "Send problem report" button, on the window's thread, once the friend has said what happened ({@code
+	 * words}, which may be empty): the report is put together and sent on the worker, and {@code done} hears what
+	 * became of it back here.
+	 */
+	public void sendReport(String words, Consumer<ReportSender.Outcome> done)
+	{
+		worker.run(() ->
+		{
+			String report = ProblemReport.withWhatHappened(build(), words, session.dataDir());
+			ReportSender.Outcome outcome = sender == null
+				? new ReportSender.Outcome.Kept(false)
+				: sender.send(report, clock.instant());
+			ui.later(() -> done.accept(outcome));
+		});
+	}
+
+	private String build()
+	{
+		return ProblemReport.build(session.platform(), system, version(), session.revision(), session.pin(),
+			session.recent(), session.dataDir(), session.gameLog(), session.clientLog(), clock.instant());
 	}
 
 	private void paste(String report, int triesLeft, Consumer<Boolean> done)

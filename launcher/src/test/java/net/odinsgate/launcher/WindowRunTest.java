@@ -176,6 +176,70 @@ public class WindowRunTest
 			clock, this::toClipboard, SYSTEM);
 	}
 
+	private WindowRun windowRun(LauncherRun.Steps steps, ReportSender sender)
+	{
+		LauncherRun run = new LauncherRun("0.1.0", steps, clock);
+		LaunchOptions options = LaunchOptions.parse(List.of("--home", home.toString()));
+		LauncherRun.Session session =
+			run.session(options, manifest, LINUX, Map.of(), dir.resolve("user-home"), INSTALLED, log);
+		return new WindowRun(new Screen(false, session.firstRun()), session, Optional::empty, worker, Runnable::run,
+			views::add, clock, this::toClipboard, SYSTEM, sender);
+	}
+
+	@Test
+	public void sendingAReportPutsWhatHappenedInItAndSaysWhatBecameOfIt() throws Exception
+	{
+		java.util.List<String> bodies = new java.util.ArrayList<>();
+		com.sun.net.httpserver.HttpServer server =
+			com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+		server.createContext(ReportSender.PATH, exchange ->
+		{
+			bodies.add(new String(exchange.getRequestBody().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8));
+			byte[] reply = ("R-000" + bodies.size() + "\n").getBytes(java.nio.charset.StandardCharsets.UTF_8);
+			exchange.sendResponseHeaders(201, reply.length);
+			exchange.getResponseBody().write(reply);
+			exchange.close();
+		});
+		server.start();
+		try
+		{
+			Path outbox = dir.resolve("outbox");
+			ReportSender sender = new ReportSender(java.net.URI.create("http://127.0.0.1:"
+				+ server.getAddress().getPort() + ReportSender.PATH), outbox, Duration.ofSeconds(5));
+			// One that couldn't go last time waits in the outbox; the start sends it.
+			java.nio.file.Files.createDirectories(outbox);
+			java.nio.file.Files.writeString(outbox.resolve("1-a.txt"), "an old report");
+			WindowRun run = windowRun(new LauncherRunTest.FakeSteps(), sender);
+			run.start();
+			worker.drain();
+			assertEquals("an old report", bodies.get(0));
+			assertTrue(sender.waiting().isEmpty());
+
+			ReportSender.Outcome[] outcome = new ReportSender.Outcome[1];
+			run.sendReport("the game froze when I opened the bank", o -> outcome[0] = o);
+			worker.drain();
+			assertEquals(new ReportSender.Outcome.Sent("R-0002"), outcome[0]);
+			String report = bodies.get(1);
+			assertTrue(report.startsWith(Names.APP_NAME + " problem report, "), report);
+			assertTrue(report.contains("\n" + ProblemReport.WHAT_HAPPENED + "\nthe game froze when I opened the bank\n"), report);
+			assertTrue(report.indexOf(ProblemReport.WHAT_HAPPENED) < report.indexOf("== last steps and checks =="), report);
+		}
+		finally
+		{
+			server.stop(0);
+		}
+	}
+
+	@Test
+	public void withoutASenderAReportIsNeverSaidToBeSent()
+	{
+		WindowRun run = windowRun(new LauncherRunTest.FakeSteps(), (ReportSender) null);
+		ReportSender.Outcome[] outcome = new ReportSender.Outcome[1];
+		run.sendReport("", o -> outcome[0] = o);
+		worker.drain();
+		assertEquals(new ReportSender.Outcome.Kept(false), outcome[0]);
+	}
+
 	private void toClipboard(String text)
 	{
 		if (clipboardBusy > 0)
