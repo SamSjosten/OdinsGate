@@ -19,8 +19,10 @@ import java.nio.file.attribute.FileTime;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
 import java.security.Signature;
+import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -164,6 +166,13 @@ public class RuneLiteCacheTest
 		return new RuneLiteCache(root, base, List.of(RUNELITE.getPublic()), TIMEOUT);
 	}
 
+	/** {@link #cache()} on a clock that reads {@code now}. */
+	private RuneLiteCache cacheAt(Instant now)
+	{
+		String base = "http://" + LOOPBACK.getHostAddress() + ":" + web.getAddress().getPort() + "/static/";
+		return new RuneLiteCache(root, base, List.of(RUNELITE.getPublic()), TIMEOUT, Clock.fixed(now, ZoneOffset.UTC));
+	}
+
 	/** A cache whose every fetch would fail: the static base points at a port nothing listens on. */
 	private RuneLiteCache offlineCache()
 	{
@@ -187,15 +196,18 @@ public class RuneLiteCacheTest
 	}
 
 	@Test
-	public void fetchingAPinMarksItUsed() throws Exception
+	public void fetchingAWarmPinMarksItUsed() throws Exception
 	{
-		RuneLiteCache cache = cache();
-		Bootstrap bootstrap = cache.bootstrap(pin);
-		Instant before = Instant.now().minusSeconds(60);
-		Files.createDirectories(root.resolve(COMMIT));
-		Files.setLastModifiedTime(root.resolve(COMMIT), FileTime.from(Instant.parse("2020-01-01T00:00:00Z")));
-		cache.jars(pin, bootstrap, WINDOWS);
-		assertFalse(Files.getLastModifiedTime(root.resolve(COMMIT)).toInstant().isBefore(before));
+		// Filled first and then left alone, so the fetch below writes nothing: only the mark can move the date.
+		Bootstrap bootstrap = cache().bootstrap(pin);
+		cache().jars(pin, bootstrap, WINDOWS);
+		Instant longAgo = Instant.parse("2020-01-01T00:00:00Z");
+		Files.setLastModifiedTime(root.resolve(COMMIT), FileTime.from(longAgo));
+
+		Instant now = Instant.parse("2026-11-01T12:00:00Z");
+		cacheAt(now).jars(pin, cacheAt(now).bootstrap(pin), WINDOWS);
+		assertEquals(now, Files.getLastModifiedTime(root.resolve(COMMIT)).toInstant(),
+			"a pin started from the cache is in use, so another window's prune spares it");
 	}
 
 	@Test
@@ -306,7 +318,7 @@ public class RuneLiteCacheTest
 		Path recent = Files.createDirectories(root.resolve("ef".repeat(20)));
 		Files.setLastModifiedTime(recent, FileTime.from(now.minus(Duration.ofHours(1))));
 
-		cache().prune(Set.of(COMMIT), now.minus(RuneLiteCache.RECENTLY_USED));
+		cacheAt(now).prune(Set.of(COMMIT));
 		assertTrue(Files.exists(keep.resolve("client.jar")));
 		assertFalse(Files.exists(root.resolve("cd".repeat(20))));
 		assertTrue(Files.exists(recent), "a pin used within the week may be about to start in another window");

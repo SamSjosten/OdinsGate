@@ -14,6 +14,7 @@ import java.nio.file.attribute.FileTime;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.PublicKey;
+import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -48,6 +49,7 @@ public final class RuneLiteCache
 	private final String staticBase;
 	private final List<PublicKey> runeliteKeys;
 	private final Duration timeout;
+	private final Clock clock;
 	private final HttpClient http;
 
 	public RuneLiteCache(Path root)
@@ -58,10 +60,17 @@ public final class RuneLiteCache
 	/** Tests pass their own bootstrap host and signing keys. */
 	public RuneLiteCache(Path root, String staticBase, List<PublicKey> runeliteKeys, Duration timeout)
 	{
+		this(root, staticBase, runeliteKeys, timeout, Clock.systemUTC());
+	}
+
+	/** Tests also set the clock that marks a pin used and dates a prune's cut-off. */
+	RuneLiteCache(Path root, String staticBase, List<PublicKey> runeliteKeys, Duration timeout, Clock clock)
+	{
 		this.root = root;
 		this.staticBase = staticBase;
 		this.runeliteKeys = runeliteKeys;
 		this.timeout = timeout;
+		this.clock = clock;
 		this.http = HttpClient.newBuilder().connectTimeout(timeout).followRedirects(HttpClient.Redirect.NORMAL).build();
 	}
 
@@ -130,7 +139,7 @@ public final class RuneLiteCache
 			classpath.add(jar);
 		}
 		// Marks the pin used, so a prune from another window spares it (see prune).
-		Files.setLastModifiedTime(dir, FileTime.from(Instant.now()));
+		Files.setLastModifiedTime(dir, FileTime.from(clock.instant()));
 		return List.copyOf(classpath);
 	}
 
@@ -140,12 +149,7 @@ public final class RuneLiteCache
 	 */
 	public void prune(Set<String> keepCommits) throws IOException
 	{
-		prune(keepCommits, Instant.now().minus(RECENTLY_USED));
-	}
-
-	/** {@link #prune(Set)} with the cut-off given: a pin folder last used before it, and not kept, goes. */
-	void prune(Set<String> keepCommits, Instant usedBefore) throws IOException
-	{
+		Instant usedBefore = clock.instant().minus(RECENTLY_USED);
 		if (!Files.isDirectory(root))
 		{
 			return;
