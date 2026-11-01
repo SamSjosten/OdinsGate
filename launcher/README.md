@@ -72,11 +72,12 @@ The core that later PRs build on; no window or releases yet:
   `Loader` is the child JVM's entry point: given the jars, key, port and main class it runs the preflight scan,
   refuses with every gap named (exit 2), or loads RuneLite through the patching loader and calls its main method on
   a thread of its own, the context class loader set so Swing and plugins find RuneLite's classes. It also takes
-  `--allow host:port` for each endpoint the game may reach (our server's game and HTTP ports, which `Launch`
-  passes) and installs `ConnectGuard` before the first RuneLite class loads.
-- `ConnectGuard`: the game reaches our server and nothing else. It is the child JVM's default `ProxySelector`,
-  which every `Socket`, `HttpURLConnection` and `java.net.http` connection in the JVM asks before it connects,
-  so a host is never even resolved unless it is allowed. The allowed endpoints and loopback (RuneLite's own
+  `--allow host:port` for each endpoint the game may reach (our server's game and HTTP ports, and RuneLite's
+  Plugin Hub `repo.runelite.net:443` and static data `static.runelite.net:443`, which `Launch` passes) and
+  installs `ConnectGuard` before the first RuneLite class loads.
+- `ConnectGuard`: the game reaches our server and RuneLite's own Plugin Hub and static data, and nothing else
+  (no Jagex host, no Wiki). It is the child JVM's default `ProxySelector`, which every `Socket`,
+  `HttpURLConnection` and `java.net.http` connection in the JVM asks before it connects, so a host is never even resolved unless it is allowed. The allowed endpoints and loopback (RuneLite's own
   local sockets) get a direct connection; everything else is sent to a proxy that is a loopback socket of ours
   which accepts and closes at once, so the attempt fails on the spot instead of reaching the network. An
   allowed name is also allowed by its resolved addresses, but only while it still resolves to them: the names
@@ -206,7 +207,9 @@ Friends install one file for their system and nothing else: the installer carrie
   ready, that the
   game's command line exactly as `ClientCommand` builds it starts a child JVM from that java on this code's jars
   (`Loader --self-test`: the connect guard set, the fake game port reached through it, `192.0.2.1:80` refused by the
-  guard itself and counted, so a guard that isn't there can't pass), and, where there is a display, that the window
+  guard itself and counted, so a guard that isn't there can't pass, and the production policy for RuneLite's own
+  servers decided without a connection: `repo.runelite.net` and `static.runelite.net` let through, `api.runelite.net`
+  refused), and, where there is a display, that the window
   opens titled Odin's Gate and closes. Each step is `[self-test] ok` or `FAIL` in the launcher's log; exit 0 or 70.
   Its files go under `<data>/self-test/`.
 - The scan (`ImageScan`): `appImageScan` runs it from the image's own runtime and jar over the image: no name a

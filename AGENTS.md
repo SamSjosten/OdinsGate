@@ -25,7 +25,8 @@ opinions; do flag anything below that the diff gets wrong.
 
 ### What the game may reach
 
-- The child JVM reaches our server and nothing else (`ConnectGuard`, `Loader --allow`). Flag a new endpoint, a way
+- The child JVM reaches our server and RuneLite's Plugin Hub and static data (`Loader.RUNELITE_ENDPOINTS`, Sam's
+  call) and nothing else (`ConnectGuard`, `Loader --allow`). Flag a new endpoint, a way
   around the guard, or a patch (`Preflight`, `ClassPatch`) found by class or method name instead of by bytecode
   shape with an exact count.
 - Nothing of RuneLite's or of the game's publisher enters the repository: no jar but the Gradle wrapper's, no client,

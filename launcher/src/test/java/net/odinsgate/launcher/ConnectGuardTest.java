@@ -2,6 +2,7 @@ package net.odinsgate.launcher;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -191,6 +192,28 @@ public class ConnectGuardTest
 		assertEquals(Proxy.Type.SOCKS,
 			refused(guard.select(URI.create("socket://" + local.getHostAddress() + ":43595"))).type(),
 			"the same address on another port is not allowed");
+	}
+
+	/** The self-test's guard asks DNS nothing, so a slow resolver can't hold it up; names still pass by name. */
+	@Test
+	public void aGuardWithoutLookupsAllowsTheNamesByNameAndNoAddressForThem() throws Exception
+	{
+		AtomicInteger lookups = new AtomicInteger();
+		ConnectGuard.Resolver counting = host ->
+		{
+			lookups.incrementAndGet();
+			return ConnectGuard.NO_LOOKUPS.resolve(host);
+		};
+		guard = ConnectGuard.install(List.of("repo.runelite.net:443", "127.0.0.1:1"), log, counting);
+		assertSame(guard, ProxySelector.getDefault(), "installed as the JVM's selector");
+		assertEquals(1, lookups.get(), "the one name was handed to the given resolver, not to DNS");
+		assertThrows(UnknownHostException.class, () -> ConnectGuard.NO_LOOKUPS.resolve("repo.runelite.net"));
+
+		assertEquals(List.of(Proxy.NO_PROXY), guard.select(URI.create("https://repo.runelite.net/plugins")));
+		assertEquals(List.of(Proxy.NO_PROXY), guard.select(URI.create("socket://127.0.0.1:1")));
+		assertEquals(Proxy.Type.HTTP, refused(guard.select(URI.create("https://api.runelite.net"))).type());
+		assertEquals(Proxy.Type.SOCKS, refused(guard.select(URI.create("socket://192.0.2.10:443"))).type(),
+			"an address stands for no name that was never resolved");
 	}
 
 	@Test

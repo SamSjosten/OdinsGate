@@ -27,10 +27,10 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * The child JVM's one rule about the network: the game reaches our server and nothing else. Plain sockets, URL
- * connections, OkHttp and {@code java.net.http} all ask the JVM's default {@link ProxySelector} before they connect,
- * and this is that selector: an endpoint on the allow list (our server's game and HTTP ports, as the loader is
- * told them) or on loopback connects directly; anything else is handed a proxy on 127.0.0.1 that closes every
+ * The child JVM's one rule about the network: the game reaches our server, RuneLite's Plugin Hub and static data
+ * ({@link Loader#RUNELITE_ENDPOINTS}) and nothing else. Plain sockets, URL connections, OkHttp and
+ * {@code java.net.http} all ask the JVM's default {@link ProxySelector} before they connect, and this is that
+ * selector: an endpoint on the allow list (as the loader is told them) or on loopback connects directly; anything else is handed a proxy on 127.0.0.1 that closes every
  * connection at once, so the attempt fails on the spot, the host's name is never even looked up (that would be the
  * proxy's job), and nothing reaches it. RuneLite's plugins do try: its Wiki crowdsourcing plugin, on by default,
  * posts what it sees in game to the Wiki, and the hiscore and price lookups go to Jagex's and the Wiki's servers.
@@ -110,11 +110,26 @@ public final class ConnectGuard extends ProxySelector implements Closeable
 	 */
 	public static ConnectGuard install(List<String> endpoints, PrintStream log) throws IOException
 	{
+		return install(endpoints, log, InetAddress::getAllByName);
+	}
+
+	/** {@link #install(List, PrintStream)} with names resolved by {@code resolver}: the self-test looks none up. */
+	static ConnectGuard install(List<String> endpoints, PrintStream log, Resolver resolver) throws IOException
+	{
 		Security.setProperty("networkaddress.cache.ttl", Long.toString(RESOLVE_AGAIN_AFTER_SECONDS));
-		ConnectGuard guard = new ConnectGuard(endpoints, log);
+		ConnectGuard guard = new ConnectGuard(endpoints, log, resolver, System::nanoTime);
 		ProxySelector.setDefault(guard);
 		return guard;
 	}
+
+	/**
+	 * A resolver that never asks DNS: every name is "unknown", so the guard allows the listed names by name only.
+	 * The self-test uses it so a slow or missing resolver can't hold it up; the game itself never does.
+	 */
+	static final Resolver NO_LOOKUPS = host ->
+	{
+		throw new UnknownHostException("not looked up: " + host);
+	};
 
 	/** The allowed endpoints, as {@code host:port}, hosts lowercased. */
 	public Set<String> endpoints()
