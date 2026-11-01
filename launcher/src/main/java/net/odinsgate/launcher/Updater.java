@@ -368,8 +368,20 @@ public final class Updater
 		}
 		if (remote != null)
 		{
-			rotatePrimaryKeyIfNamed(remote, trusted);
+			List<PublicKey> rotated = rotatePrimaryKeyIfNamed(remote, trusted);
+			if (!rotated.equals(trusted))
+			{
+				// The rotation holds from this run on, not the next: should the recovery release's jars not come
+				// down, nothing the old primary signed (a kept manifest, a downloaded version) is taken instead.
+				trusted = rotated;
+				if (stored != null && !Signatures.verify(stored.bytes(), stored.signature(), trusted))
+				{
+					stored = null;
+				}
+			}
 		}
+		// Whether a downloaded version may be run: it is handed the kept file, never the manifest in memory.
+		boolean handOff = true;
 		if (remote != null && (onDisk == null || !Arrays.equals(onDisk.bytes(), remote.bytes())))
 		{
 			try
@@ -379,10 +391,20 @@ public final class Updater
 			}
 			catch (IOException e)
 			{
-				// What a downloaded version is handed is the kept file, so what can't be kept isn't followed.
+				// What a downloaded version is handed is the kept file, so what can't be kept isn't followed. With
+				// nothing accepted to fall back on, the installed launcher runs on the manifest in memory: the file
+				// still at the kept path may be one this run no longer trusts (a key rotation's revoked primary).
 				log.println("[updater] the release manifest could not be kept: " + e.getMessage()
-					+ (stored == null ? "" : ": the accepted " + stored.manifest().version + " stands"));
-				remote = stored == null ? remote : null;
+					+ (stored == null ? ": only the installed launcher runs" : ": the accepted "
+					+ stored.manifest().version + " stands"));
+				if (stored == null)
+				{
+					handOff = false;
+				}
+				else
+				{
+					remote = null;
+				}
 			}
 		}
 		Loaded accepted = remote;
@@ -405,6 +427,10 @@ public final class Updater
 		{
 			return new NeedsInstaller("this launcher is version " + shellVersion + " and the release needs "
 				+ manifest.minBootstrapVersion + " or newer");
+		}
+		if (!handOff)
+		{
+			return installed(accepted, " (the manifest isn't kept, so no downloaded version runs)");
 		}
 		String target = manifest.version;
 		if (Versions.isNewer(target, shellVersion) && !isBad(target))
@@ -445,14 +471,19 @@ public final class Updater
 		}
 		if (chosen == null || Versions.compare(shellVersion, chosen) >= 0)
 		{
-			log.println("[updater] running the installed launcher " + shellVersion
-				+ (chosen == null ? "" : " (newer than " + chosen + ")") + " with manifest "
-				+ accepted.manifest().version);
-			return new Run(shellVersion, null, List.of(), accepted.manifest(), accepted.file());
+			return installed(accepted, chosen == null ? "" : " (newer than " + chosen + ")");
 		}
 		log.println("[updater] running version " + chosen + " with manifest " + accepted.manifest().version);
 		return new Run(chosen, versionDir(chosen), jarsOf(chosen, verified.get(chosen)), accepted.manifest(),
 			accepted.file());
+	}
+
+	/** The installed launcher's own run, with {@code accepted} as its manifest; {@code why} goes in the log. */
+	private Run installed(Loaded accepted, String why)
+	{
+		log.println("[updater] running the installed launcher " + shellVersion + why + " with manifest "
+			+ accepted.manifest().version);
+		return new Run(shellVersion, null, List.of(), accepted.manifest(), accepted.file());
 	}
 
 	/** The jars {@code version}'s own signed manifest {@code kept} names, under its folder: the class path. */
@@ -492,25 +523,37 @@ public final class Updater
 
 	/**
 	 * A manifest signed by the backup key that names a new primary rotates the trust: from then on that key and the
-	 * backup are the trusted ones, and the old primary (lost, or leaked) signs nothing a friend takes.
+	 * backup are the trusted ones, and the old primary (lost, or leaked) signs nothing a friend takes. Returns the
+	 * keys the rest of this run trusts: {@code trusted} unchanged, or the new primary and the backup, even when the
+	 * keys file could not be written (the next run then rotates again from the same manifest).
 	 */
-	private void rotatePrimaryKeyIfNamed(Loaded remote, List<PublicKey> trusted)
+	private List<PublicKey> rotatePrimaryKeyIfNamed(Loaded remote, List<PublicKey> trusted)
 	{
 		String named = remote.manifest().nextPrimaryKey;
 		if (named == null || backupKey == null)
 		{
-			return;
+			return trusted;
 		}
 		if (!Signatures.verify(remote.bytes(), remote.signature(), List.of(backupKey)))
 		{
 			log.println("[updater] the manifest names a new primary key but isn't signed by the backup key: "
 				+ "not rotated");
-			return;
+			return trusted;
 		}
 		String current = Base64.getEncoder().encodeToString(trusted.get(0).getEncoded());
 		if (current.equals(named))
 		{
-			return;
+			return trusted;
+		}
+		PublicKey primary;
+		try
+		{
+			primary = Signatures.publicKey(named);
+		}
+		catch (IllegalArgumentException e)
+		{
+			log.println("[updater] the manifest names a new primary key that doesn't read: not rotated");
+			return trusted;
 		}
 		try
 		{
@@ -519,8 +562,10 @@ public final class Updater
 		}
 		catch (IOException e)
 		{
-			log.println("[updater] the new primary key could not be kept: " + e.getMessage());
+			log.println("[updater] the new primary key could not be kept: " + e.getMessage()
+				+ "; it is trusted for this run");
 		}
+		return List.of(primary, backupKey);
 	}
 
 	/** A manifest and its signature from {@code file} and {@code file.sig}, verified and parsed; null otherwise. */

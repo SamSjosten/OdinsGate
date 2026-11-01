@@ -155,8 +155,10 @@ public class ScreenTest
 		assertEquals("The server was updated.", view.status());
 		assertTrue(view.detail().contains("242"), view.detail());
 		assertTrue(view.detail().contains("update is on its way"), view.detail());
+		assertTrue(view.detail().contains("Close the launcher and open it again"),
+			"the update comes with a fresh start, which reads the release manifest again: " + view.detail());
 		assertFalse(view.busy());
-		assertTrue(view.canRetry(), "Retry asks the server again, for when the update has landed");
+		assertTrue(view.canRetry(), "Retry asks the server again, for a server put back on the known revision");
 		assertFalse(view.canPlay());
 		assertEquals(List.of(new Screen.Command.Check()), screen.on(new Screen.Event.Retry()));
 	}

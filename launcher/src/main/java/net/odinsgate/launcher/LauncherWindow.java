@@ -121,6 +121,39 @@ public final class LauncherWindow
 		}
 	}
 
+	/**
+	 * Says why there is nothing to run (on a fresh install, most often no internet yet) and offers to try again;
+	 * true when the friend chose to. Before any launcher window exists, so it stands alone.
+	 */
+	static boolean noManifest(String why, PrintStream log)
+	{
+		javax.swing.JOptionPane pane = noManifestPane(why);
+		javax.swing.JDialog dialog = pane.createDialog(null, Names.APP_NAME);
+		dialog.setVisible(true);
+		dialog.dispose();
+		return choseTryAgain(pane.getValue());
+	}
+
+	static final String TRY_AGAIN = "Try again";
+	static final String CLOSE = "Close";
+
+	/** The no-manifest question: the reason as plain text (never HTML), Try again first and the default. */
+	static javax.swing.JOptionPane noManifestPane(String why)
+	{
+		javax.swing.JLabel text = new javax.swing.JLabel();
+		text.putClientProperty(LauncherPanel.HTML_OFF, Boolean.TRUE);
+		text.setText(Names.APP_NAME + " can't start yet: " + why);
+		String[] choices = {TRY_AGAIN, CLOSE};
+		return new javax.swing.JOptionPane(text, javax.swing.JOptionPane.WARNING_MESSAGE,
+			javax.swing.JOptionPane.DEFAULT_OPTION, null, choices, TRY_AGAIN);
+	}
+
+	/** What the pane's value means: Try again only when that button was pressed; Close or the window's X close. */
+	static boolean choseTryAgain(Object value)
+	{
+		return TRY_AGAIN.equals(value);
+	}
+
 	static void stop(ScheduledExecutorService pool)
 	{
 		pool.shutdown();

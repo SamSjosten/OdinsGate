@@ -679,6 +679,50 @@ public class UpdaterTest
 	}
 
 	@Test
+	public void aRotationHoldsAtOnceSoAVersionTheOldPrimarySignedIsNotTheFallback() throws Exception
+	{
+		release(PRIMARY, "0.2.0", Map.of("a.jar", JAR_A));
+		assertEquals("0.2.0", run(updater("0.1.0").update()).version());
+		// The primary leaks: the backup signs a recovery release naming a new one, and its jar doesn't come down.
+		release(BACKUP, "0.3.0", "0.1.0", Map.of("b.jar", JAR_B), spki(NEW_PRIMARY));
+		served.remove(RELEASES + "/download/v0.3.0/b.jar");
+		Updater.Run run = run(updater("0.1.0").update());
+		assertTrue(logText().contains("the backup key named a new primary key: rotated"), logText());
+		assertEquals("0.1.0", run.version(), "0.2.0 was signed by the old primary: the installed shell runs instead");
+		assertEquals("0.3.0", run.manifest().version, "with the recovery manifest");
+		assertTrue(logText().contains("falling back") || logText().contains("running the installed launcher"),
+			logText());
+	}
+
+	@Test
+	public void aRecoveryManifestThatCantBeKeptIsNeverHandedToADownloadedVersion() throws Exception
+	{
+		release(PRIMARY, "0.2.0", Map.of("a.jar", JAR_A));
+		assertEquals("0.2.0", run(updater("0.1.0").update()).version());
+		// The backup's recovery release, with its jar, but the kept pair can't be written: a non-empty folder
+		// stands where the new signature goes. The old primary's manifest is still at the kept path.
+		release(BACKUP, "0.3.0", "0.1.0", Map.of("b.jar", JAR_B), spki(NEW_PRIMARY));
+		Files.createDirectories(data.resolve("manifest.json.new.sig").resolve("x"));
+		Updater.Run run = run(updater("0.1.0").update());
+		assertTrue(logText().contains("could not be kept"), logText());
+		assertTrue(run.installed(), "no hand-off, which would pass the old primary's file: " + run.version());
+		assertEquals("0.3.0", run.manifest().version, "the installed launcher runs on the recovery manifest");
+		assertEquals(0, fetchesOf("b.jar"), "nothing is downloaded that couldn't be run");
+	}
+
+	@Test
+	public void aNamedPrimaryKeyIsTrustedThisRunEvenWhenTheKeysFileCantBeWritten() throws Exception
+	{
+		// A non-empty folder where the file goes: the write fails.
+		Files.createDirectories(data.resolve("keys.json"));
+		Files.writeString(data.resolve("keys.json").resolve("x"), "x");
+		release(BACKUP, "0.2.0", "0.1.0", Map.of("a.jar", JAR_A), spki(NEW_PRIMARY));
+		assertEquals("0.2.0", run(updater("0.1.0").update()).version());
+		assertTrue(logText().contains("the new primary key could not be kept"), logText());
+		assertTrue(logText().contains("it is trusted for this run"), logText());
+	}
+
+	@Test
 	public void anOlderBackupSignedManifestReplayedRotatesNothing() throws Exception
 	{
 		release(PRIMARY, "0.3.0", Map.of("b.jar", JAR_B));

@@ -10,15 +10,22 @@ import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.attribute.FileTime;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.PublicKey;
+import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 /**
  * The launcher's own cache of RuneLite, one folder per pinned static.runelite.net commit, under our data folder and
@@ -33,10 +40,16 @@ public final class RuneLiteCache
 	/** Where RuneLite keeps every release's bootstrap.json; the pin names the commit. */
 	public static final String DEFAULT_STATIC_BASE = "https://raw.githubusercontent.com/runelite/static.runelite.net/";
 
+	/** How long a pin folder no manifest names is kept after its last use, for other windows still holding it. */
+	static final Duration RECENTLY_USED = Duration.ofDays(7);
+	/** The slowest download a jar is waited for, in bytes a second (32 KiB). */
+	static final long SLOWEST_BYTES_PER_SECOND = 32 * 1024;
+
 	private final Path root;
 	private final String staticBase;
 	private final List<PublicKey> runeliteKeys;
 	private final Duration timeout;
+	private final Clock clock;
 	private final HttpClient http;
 
 	public RuneLiteCache(Path root)
@@ -47,10 +60,17 @@ public final class RuneLiteCache
 	/** Tests pass their own bootstrap host and signing keys. */
 	public RuneLiteCache(Path root, String staticBase, List<PublicKey> runeliteKeys, Duration timeout)
 	{
+		this(root, staticBase, runeliteKeys, timeout, Clock.systemUTC());
+	}
+
+	/** Tests also set the clock that marks a pin used and dates a prune's cut-off. */
+	RuneLiteCache(Path root, String staticBase, List<PublicKey> runeliteKeys, Duration timeout, Clock clock)
+	{
 		this.root = root;
 		this.staticBase = staticBase;
 		this.runeliteKeys = runeliteKeys;
 		this.timeout = timeout;
+		this.clock = clock;
 		this.http = HttpClient.newBuilder().connectTimeout(timeout).followRedirects(HttpClient.Redirect.NORMAL).build();
 	}
 
@@ -108,7 +128,7 @@ public final class RuneLiteCache
 			if (!verifies(jar, artifact))
 			{
 				Files.deleteIfExists(jar);
-				byte[] bytes = fetch(artifact.path());
+				byte[] bytes = fetch(artifact.path(), deadlineFor(artifact.size()));
 				if (bytes.length != artifact.size() || !sha256(bytes).equals(artifact.hash()))
 				{
 					throw new BootstrapException(artifact.name() + " from " + artifact.path()
@@ -118,12 +138,18 @@ public final class RuneLiteCache
 			}
 			classpath.add(jar);
 		}
+		// Marks the pin used, so a prune from another window spares it (see prune).
+		Files.setLastModifiedTime(dir, FileTime.from(clock.instant()));
 		return List.copyOf(classpath);
 	}
 
-	/** Deletes every pin folder but these, keeping the current pin and the one before it, as the plan says. */
+	/**
+	 * Deletes every pin folder but these and those used within {@link #RECENTLY_USED}: another launcher window on
+	 * the same data folder, from an older or newer release, may hold a pin it fetched and is about to play.
+	 */
 	public void prune(Set<String> keepCommits) throws IOException
 	{
+		Instant usedBefore = clock.instant().minus(RECENTLY_USED);
 		if (!Files.isDirectory(root))
 		{
 			return;
@@ -132,7 +158,8 @@ public final class RuneLiteCache
 		{
 			for (Path pin : pins)
 			{
-				if (!keepCommits.contains(pin.getFileName().toString()))
+				if (!keepCommits.contains(pin.getFileName().toString())
+					&& Files.getLastModifiedTime(pin).toInstant().isBefore(usedBefore))
 				{
 					deleteTree(pin);
 				}
@@ -152,23 +179,58 @@ public final class RuneLiteCache
 			&& sha256(Files.readAllBytes(jar)).equals(artifact.hash());
 	}
 
+	/** A small file (the bootstrap, its signature): the whole answer within the timeout. */
 	private byte[] fetch(String url) throws IOException
 	{
-		HttpRequest request = HttpRequest.newBuilder(URI.create(url)).timeout(timeout).GET().build();
+		return fetch(url, timeout);
+	}
+
+	/**
+	 * One GET, the whole answer within {@code deadline}. The request's own timeout covers the headers only, so a
+	 * body that stalls after them would hold the window in its download forever, with neither Play nor Retry; past
+	 * the deadline the download is cancelled and fails like any other.
+	 */
+	private byte[] fetch(String url, Duration deadline) throws IOException
+	{
+		HttpRequest request = HttpRequest.newBuilder(URI.create(url)).timeout(deadline).GET().build();
+		CompletableFuture<HttpResponse<byte[]>> sent =
+			http.sendAsync(request, HttpResponse.BodyHandlers.ofByteArray());
+		HttpResponse<byte[]> response;
 		try
 		{
-			HttpResponse<byte[]> response = http.send(request, HttpResponse.BodyHandlers.ofByteArray());
-			if (response.statusCode() != 200)
-			{
-				throw new IOException(url + " answered " + response.statusCode());
-			}
-			return response.body();
+			response = sent.get(deadline.toMillis(), TimeUnit.MILLISECONDS);
+		}
+		catch (TimeoutException e)
+		{
+			sent.cancel(true);
+			throw new IOException(url + " didn't arrive whole within " + deadline.toSeconds() + " s");
+		}
+		catch (ExecutionException e)
+		{
+			Throwable cause = e.getCause() == null ? e : e.getCause();
+			throw new IOException(url + ": " + cause.getMessage(), cause);
 		}
 		catch (InterruptedException e)
 		{
 			Thread.currentThread().interrupt();
+			sent.cancel(true);
 			throw new IOException("interrupted while fetching " + url, e);
 		}
+		if (response.statusCode() != 200)
+		{
+			throw new IOException(url + " answered " + response.statusCode());
+		}
+		return response.body();
+	}
+
+	/**
+	 * How long a jar of {@code size} bytes may take: the timeout, plus its time at
+	 * {@value #SLOWEST_BYTES_PER_SECOND} bytes a second, a connection slow enough that the friend would rather be
+	 * told and offered Retry.
+	 */
+	Duration deadlineFor(long size)
+	{
+		return timeout.plusSeconds(size / SLOWEST_BYTES_PER_SECOND);
 	}
 
 	/** Whole file or nothing: a temp file in the same folder, then an atomic-as-the-system-allows move. */

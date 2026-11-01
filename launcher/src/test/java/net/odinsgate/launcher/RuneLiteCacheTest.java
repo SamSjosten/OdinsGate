@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.sun.net.httpserver.HttpServer;
@@ -14,15 +15,20 @@ import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.FileTime;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
 import java.security.Signature;
+import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -51,6 +57,8 @@ public class RuneLiteCacheTest
 	private HttpServer web;
 	private final Map<String, byte[]> served = new HashMap<>();
 	private final Map<String, AtomicInteger> hits = new ConcurrentHashMap<>();
+	private final Set<String> stalled = ConcurrentHashMap.newKeySet();
+	private final CountDownLatch release = new CountDownLatch(1);
 	private byte[] bootstrapBytes;
 	private Manifest.Pin pin;
 
@@ -92,6 +100,24 @@ public class RuneLiteCacheTest
 			String path = exchange.getRequestURI().getPath();
 			hits.computeIfAbsent(path, p -> new AtomicInteger()).incrementAndGet();
 			byte[] body = served.get(path);
+			if (body != null && stalled.contains(path))
+			{
+				// The headers and half the body, then nothing until the test ends: a download that stalls.
+				exchange.sendResponseHeaders(200, body.length);
+				OutputStream out = exchange.getResponseBody();
+				out.write(body, 0, body.length / 2);
+				out.flush();
+				try
+				{
+					release.await();
+				}
+				catch (InterruptedException e)
+				{
+					Thread.currentThread().interrupt();
+				}
+				exchange.close();
+				return;
+			}
 			if (body == null)
 			{
 				exchange.sendResponseHeaders(404, -1);
@@ -123,6 +149,7 @@ public class RuneLiteCacheTest
 	@AfterEach
 	public void stop()
 	{
+		release.countDown();
 		web.stop(0);
 	}
 
@@ -139,11 +166,56 @@ public class RuneLiteCacheTest
 		return new RuneLiteCache(root, base, List.of(RUNELITE.getPublic()), TIMEOUT);
 	}
 
+	/** {@link #cache()} on a clock that reads {@code now}. */
+	private RuneLiteCache cacheAt(Instant now)
+	{
+		String base = "http://" + LOOPBACK.getHostAddress() + ":" + web.getAddress().getPort() + "/static/";
+		return new RuneLiteCache(root, base, List.of(RUNELITE.getPublic()), TIMEOUT, Clock.fixed(now, ZoneOffset.UTC));
+	}
+
 	/** A cache whose every fetch would fail: the static base points at a port nothing listens on. */
 	private RuneLiteCache offlineCache()
 	{
 		return new RuneLiteCache(root, "http://" + LOOPBACK.getHostAddress() + ":1/static/",
 			List.of(RUNELITE.getPublic()), TIMEOUT);
+	}
+
+	@Test
+	public void aJarWhoseBodyStallsFailsAtItsDeadlineInsteadOfHanging() throws Exception
+	{
+		stalled.add("/jars/client.jar");
+		RuneLiteCache cache = cache();
+		Bootstrap bootstrap = cache.bootstrap(pin);
+		// Bounded, so a download that never gives up fails this test instead of hanging the suite: the handler
+		// stays stalled until the test ends, which a missing deadline would otherwise wait for forever.
+		IOException stall = assertTimeoutPreemptively(Duration.ofMinutes(1),
+			() -> assertThrows(IOException.class, () -> cache.jars(pin, bootstrap, WINDOWS)),
+			"the download has a deadline");
+		assertTrue(stall.getMessage().contains("client.jar didn't arrive whole within"), stall.getMessage());
+		assertFalse(Files.exists(root.resolve(COMMIT).resolve("client.jar")), "nothing half-written is kept");
+	}
+
+	@Test
+	public void fetchingAWarmPinMarksItUsed() throws Exception
+	{
+		// Filled first and then left alone, so the fetch below writes nothing: only the mark can move the date.
+		Bootstrap bootstrap = cache().bootstrap(pin);
+		cache().jars(pin, bootstrap, WINDOWS);
+		Instant longAgo = Instant.parse("2020-01-01T00:00:00Z");
+		Files.setLastModifiedTime(root.resolve(COMMIT), FileTime.from(longAgo));
+
+		Instant now = Instant.parse("2026-11-01T12:00:00Z");
+		cacheAt(now).jars(pin, cacheAt(now).bootstrap(pin), WINDOWS);
+		assertEquals(now, Files.getLastModifiedTime(root.resolve(COMMIT)).toInstant(),
+			"a pin started from the cache is in use, so another window's prune spares it");
+	}
+
+	@Test
+	public void aJarsDeadlineGrowsWithItsSize()
+	{
+		RuneLiteCache cache = cache();
+		assertEquals(TIMEOUT, cache.deadlineFor(0));
+		assertEquals(TIMEOUT.plusSeconds(10), cache.deadlineFor(10 * RuneLiteCache.SLOWEST_BYTES_PER_SECOND));
 	}
 
 	@Test
@@ -240,9 +312,16 @@ public class RuneLiteCacheTest
 		Path old = Files.createDirectories(root.resolve("cd".repeat(20)).resolve("nested"));
 		Files.write(old.resolve("stale.jar"), new byte[]{1});
 
-		cache().prune(Set.of(COMMIT));
+		// The old pin was last used eight days ago; one another window fetched an hour ago is spared.
+		Instant now = Instant.parse("2026-11-01T12:00:00Z");
+		Files.setLastModifiedTime(root.resolve("cd".repeat(20)), FileTime.from(now.minus(Duration.ofDays(8))));
+		Path recent = Files.createDirectories(root.resolve("ef".repeat(20)));
+		Files.setLastModifiedTime(recent, FileTime.from(now.minus(Duration.ofHours(1))));
+
+		cacheAt(now).prune(Set.of(COMMIT));
 		assertTrue(Files.exists(keep.resolve("client.jar")));
 		assertFalse(Files.exists(root.resolve("cd".repeat(20))));
+		assertTrue(Files.exists(recent), "a pin used within the week may be about to start in another window");
 
 		// A root that was never created is nothing to prune, not an error.
 		new RuneLiteCache(root.resolve("never-made"), "http://127.0.0.1:1/", List.of(), TIMEOUT)

@@ -20,6 +20,7 @@ import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.Opcodes;
 import org.objectweb.asm.tree.AbstractInsnNode;
 import org.objectweb.asm.tree.ClassNode;
+import org.objectweb.asm.tree.FieldInsnNode;
 import org.objectweb.asm.tree.FieldNode;
 import org.objectweb.asm.tree.FrameNode;
 import org.objectweb.asm.tree.LabelNode;
@@ -27,6 +28,7 @@ import org.objectweb.asm.tree.LdcInsnNode;
 import org.objectweb.asm.tree.LineNumberNode;
 import org.objectweb.asm.tree.MethodInsnNode;
 import org.objectweb.asm.tree.MethodNode;
+import org.objectweb.asm.tree.TypeInsnNode;
 
 /**
  * The launcher's in-memory read of the pinned RuneLite jars, done once before launch: it finds the four places the
@@ -41,7 +43,8 @@ import org.objectweb.asm.tree.MethodNode;
  *   <li>{@code "127.0.0.1"} where {@code String.endsWith} takes it (the client's jav_config host check), made
  *       {@code ""} so our host passes;</li>
  *   <li>{@code ClientLoader.updateVanilla}, when the jar has it, made to return at once, so a forged config can never
- *       make the client download a gamepack (stopped before the host check below is relaxed);</li>
+ *       make the client download a gamepack (stopped before the host check below is relaxed); any other ClientLoader
+ *       method that reads or verifies a jar, as that routine did, stops the launch;</li>
  *   <li>{@code ".jagex.com"} in {@code ClientLoader.downloadConfig}, when the jar has it, made {@code ""};</li>
  *   <li>and only when the server isn't on the default game port (the staging server, {@code --server}): the int
  *       constant {@value #DEFAULT_GAME_PORT} wherever the injected client holds it, made the server's port. RSProx
@@ -67,6 +70,8 @@ public final class Preflight
 	static final String EXPONENT = "10001";
 	static final String LOCALHOST = "127.0.0.1";
 	static final String JAGEX_HOST = ".jagex.com";
+	/** The packages a gamepack download reads its jar with: none of them belongs in ClientLoader otherwise. */
+	static final List<String> JAR_READERS = List.of("java/util/jar/", "java/util/zip/", "java/security/cert/");
 	/** The game port the client is built for, the one it dials unless patched; our main server listens on it too. */
 	static final int DEFAULT_GAME_PORT = 43594;
 	private static final Pattern HEX = Pattern.compile("[0-9a-fA-F]+");
@@ -346,6 +351,24 @@ public final class Preflight
 		{
 			patch(CLIENT_LOADER).returnAtOnce(UPDATE_VANILLA);
 		}
+		// RuneLite has had no updateVanilla since it began shipping the injected client whole, so its absence is the
+		// norm, not a sign it moved. What a gamepack download can't do without is a jar or certificate reader (the
+		// old routine read the jar and checked Jagex's signature on it), so any other ClientLoader method that uses
+		// one is taken for that routine under a new name, which this launcher doesn't stop.
+		List<String> jarReaders = new ArrayList<>();
+		for (MethodNode method : node.methods)
+		{
+			if (!(method.name + method.desc).equals(UPDATE_VANILLA) && readsJars(method))
+			{
+				jarReaders.add(method.name);
+			}
+		}
+		if (!jarReaders.isEmpty())
+		{
+			missing.add("ClientLoader." + String.join(", ClientLoader.", jarReaders) + " reads or verifies a jar, as"
+				+ " a gamepack download does, and this launcher doesn't stop it");
+			return;
+		}
 		if (!methods.contains(DOWNLOAD_CONFIG))
 		{
 			missing.add("ClientLoader has no " + DOWNLOAD_CONFIG);
@@ -365,6 +388,26 @@ public final class Preflight
 			patch(CLIENT_LOADER).addRule(new ClassPatch.Rule("jagex host check", JAGEX_HOST, "", DOWNLOAD_CONFIG,
 				false, false, inDownloadConfig));
 		}
+	}
+
+	/** Whether the method uses a jar, zip or certificate class: what reading a downloaded gamepack takes. */
+	private static boolean readsJars(MethodNode method)
+	{
+		for (AbstractInsnNode insn : method.instructions)
+		{
+			String owner = switch (insn)
+			{
+				case MethodInsnNode call -> call.owner;
+				case TypeInsnNode type -> type.desc;
+				case FieldInsnNode field -> field.owner;
+				default -> null;
+			};
+			if (owner != null && JAR_READERS.stream().anyMatch(owner::startsWith))
+			{
+				return true;
+			}
+		}
+		return false;
 	}
 
 	private void scanProperty(byte[] bytes, String className, String value, String why)

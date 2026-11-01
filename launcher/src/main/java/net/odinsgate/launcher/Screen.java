@@ -275,8 +275,10 @@ public final class Screen
 			case ServerCheck.Result.UnknownRevision unknown ->
 			{
 				offlineSince = null;
+				// The launcher reads its release manifest once, when it opens, so the update that knows the
+				// revision arrives only by reopening it; Retry asks the server again, for a server put back.
 				return stopped("The server was updated.", "This launcher doesn't know revision " + unknown.revision()
-					+ " yet; its update is on its way. Try again in a few minutes.");
+					+ " yet; its update is on its way. Close the launcher and open it again in a few minutes.");
 			}
 			case ServerCheck.Result.KeyChanged changed ->
 			{
