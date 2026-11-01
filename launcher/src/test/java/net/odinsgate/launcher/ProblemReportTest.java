@@ -118,4 +118,18 @@ public class ProblemReportTest
 		assertFalse(report.contains("hunter2"), report);
 		assertTrue(report.contains("fine\n" + ProblemReport.LEFT_OUT + "\nalso fine\n"), report);
 	}
+
+	@Test
+	public void whatTheFriendWroteGoesAfterTheHeaderScrubbedAndCut()
+	{
+		Path data = Path.of("/home/jane/.local/share/OdinsGate");
+		String report = "Odin's Gate problem report, now\nlauncher 1.0.5\nrevision 241\n\n== last steps and checks ==\nstep\n";
+		assertEquals(report, ProblemReport.withWhatHappened(report, "  \n ", data), "nothing written, nothing added");
+		String with = ProblemReport.withWhatHappened(report,
+			"it froze\nmy password is hunter2\nsee " + data + "/logs", data);
+		assertEquals("Odin's Gate problem report, now\nlauncher 1.0.5\nrevision 241\n\n" + ProblemReport.WHAT_HAPPENED
+			+ "\nit froze\n" + ProblemReport.LEFT_OUT + "\nsee <data>/logs\n\n== last steps and checks ==\nstep\n", with);
+		String longer = ProblemReport.withWhatHappened(report, "x".repeat(ProblemReport.WHAT_HAPPENED_CHARS + 50), data);
+		assertTrue(longer.contains("x".repeat(ProblemReport.WHAT_HAPPENED_CHARS) + "\n\n=="), longer.length() + "");
+	}
 }

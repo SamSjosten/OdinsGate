@@ -116,6 +116,25 @@ public class LauncherPanelTest
 	}
 
 	@Test
+	public void theSendButtonWaitsWhileSendingAndThenSaysWhatBecameOfTheReport()
+	{
+		assertFalse(new LauncherPanel(() -> {}, () -> {}, () -> {}).sendButton().isVisible(), "no sender, no button");
+		AtomicInteger sends = new AtomicInteger();
+		LauncherPanel panel = new LauncherPanel(() -> {}, () -> {}, () -> {}, sends::incrementAndGet);
+		assertTrue(panel.sendButton().isVisible());
+		assertEquals(LauncherPanel.SEND_LABEL, panel.sendButton().getText());
+		panel.sendButton().doClick();
+		assertEquals(1, sends.get());
+		panel.reportSending();
+		assertFalse(panel.sendButton().isEnabled(), "one report at a time");
+		panel.reportSent(new ReportSender.Outcome.Sent("R-0042"));
+		assertEquals("Sent as R-0042, thank you", panel.sendButton().getText());
+		assertEquals("Server busy, will send next start", LauncherPanel.sentLabel(new ReportSender.Outcome.Kept(true)));
+		assertEquals("Couldn't send, copy it instead", LauncherPanel.sentLabel(new ReportSender.Outcome.Kept(false)));
+		assertEquals("Server refused it, copy it instead", LauncherPanel.sentLabel(new ReportSender.Outcome.Refused("400")));
+	}
+
+	@Test
 	public void noTextIsEverRenderedAsHtml()
 	{
 		LauncherPanel panel = new LauncherPanel(() -> {}, () -> {}, () -> {});

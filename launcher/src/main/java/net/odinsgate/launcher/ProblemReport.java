@@ -83,6 +83,34 @@ final class ProblemReport
 		return report.toString();
 	}
 
+	/** The heading of what the friend wrote about the problem, when they wrote anything. */
+	static final String WHAT_HAPPENED = "== what happened ==";
+	/** How much of what the friend wrote goes in. */
+	static final int WHAT_HAPPENED_CHARS = 2000;
+
+	/**
+	 * {@code report} with what the friend wrote about the problem after its first lines (the system, versions and
+	 * revision), before the steps and logs; {@code report} as it is when they wrote nothing. Their words go through
+	 * the same scrub as a log line, line by line, and are cut at {@link #WHAT_HAPPENED_CHARS}.
+	 */
+	static String withWhatHappened(String report, String words, Path dataDir)
+	{
+		String text = words == null ? "" : words.strip();
+		if (text.isEmpty())
+		{
+			return report;
+		}
+		if (text.length() > WHAT_HAPPENED_CHARS)
+		{
+			text = text.substring(0, WHAT_HAPPENED_CHARS);
+		}
+		String folder = dataDir.toString();
+		StringBuilder section = new StringBuilder("\n").append(WHAT_HAPPENED).append('\n');
+		text.lines().forEach(line -> section.append(scrub(line, folder)).append('\n'));
+		int steps = report.indexOf("\n== ");
+		return steps < 0 ? report + section : report.substring(0, steps) + "\n" + section.substring(1) + report.substring(steps);
+	}
+
 	private static void appendTail(StringBuilder report, String title, Path log, String folder)
 	{
 		report.append("\n== ").append(title).append(" ==\n");

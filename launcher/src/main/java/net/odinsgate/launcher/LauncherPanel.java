@@ -41,11 +41,21 @@ public final class LauncherPanel extends JPanel
 	private final JButton report = new JButton(REPORT_LABEL);
 	private final Timer reportLabelBack =
 		new Timer(COPIED_FOR_MILLIS, event -> report.setText(REPORT_LABEL));
+	private final JButton send = new JButton(SEND_LABEL);
+	private final Timer sendLabelBack = new Timer(SENT_FOR_MILLIS, event ->
+	{
+		send.setText(SEND_LABEL);
+		send.setEnabled(true);
+	});
 
 	static final String REPORT_LABEL = "Copy problem report";
 	static final String COPIED_LABEL = "Copied";
 	static final String NOT_COPIED_LABEL = "Couldn't copy, try again";
 	static final int COPIED_FOR_MILLIS = 3000;
+	static final String SEND_LABEL = "Send problem report";
+	static final String SENDING_LABEL = "Sending…";
+	/** Long enough to note the number down. */
+	static final int SENT_FOR_MILLIS = 15000;
 
 	/**
 	 * @param onPlay what the Play button does
@@ -53,6 +63,15 @@ public final class LauncherPanel extends JPanel
 	 * @param onCopyReport what the "Copy problem report" button does
 	 */
 	public LauncherPanel(Runnable onPlay, Runnable onRetry, Runnable onCopyReport)
+	{
+		this(onPlay, onRetry, onCopyReport, null);
+	}
+
+	/**
+	 * @param onSendReport what the "Send problem report" button does, or null for no such button; it calls
+	 * {@link #reportSending} if it goes ahead and {@link #reportSent} when it is done
+	 */
+	public LauncherPanel(Runnable onPlay, Runnable onRetry, Runnable onCopyReport, Runnable onSendReport)
 	{
 		super(new BorderLayout());
 		setBorder(BorderFactory.createEmptyBorder(16, 20, 16, 20));
@@ -81,6 +100,12 @@ public final class LauncherPanel extends JPanel
 		retry.addActionListener(event -> onRetry.run());
 		report.addActionListener(event -> onCopyReport.run());
 		reportLabelBack.setRepeats(false);
+		sendLabelBack.setRepeats(false);
+		send.setVisible(onSendReport != null);
+		if (onSendReport != null)
+		{
+			send.addActionListener(event -> onSendReport.run());
+		}
 
 		JPanel lines = new JPanel();
 		lines.setLayout(new BoxLayout(lines, BoxLayout.Y_AXIS));
@@ -93,8 +118,9 @@ public final class LauncherPanel extends JPanel
 		add(lines, BorderLayout.CENTER);
 
 		JPanel buttons = new JPanel(new BorderLayout());
-		JPanel left = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+		JPanel left = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
 		left.add(report);
+		left.add(send);
 		JPanel right = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
 		right.add(retry);
 		right.add(play);
@@ -108,6 +134,35 @@ public final class LauncherPanel extends JPanel
 	{
 		report.setText(copied ? COPIED_LABEL : NOT_COPIED_LABEL);
 		reportLabelBack.restart();
+	}
+
+	/** A report is on its way: the button waits until it is. */
+	public void reportSending()
+	{
+		sendLabelBack.stop();
+		send.setEnabled(false);
+		send.setText(SENDING_LABEL);
+	}
+
+	/** What became of a sent report, on the button for a while; the button works again after. */
+	public void reportSent(ReportSender.Outcome outcome)
+	{
+		send.setText(sentLabel(outcome));
+		send.setEnabled(false);
+		sendLabelBack.restart();
+	}
+
+	static String sentLabel(ReportSender.Outcome outcome)
+	{
+		if (outcome instanceof ReportSender.Outcome.Sent sent)
+		{
+			return "Sent as " + sent.id() + ", thank you";
+		}
+		if (outcome instanceof ReportSender.Outcome.Kept kept)
+		{
+			return kept.saved() ? "Server busy, will send next start" : "Couldn't send, copy it instead";
+		}
+		return "Server refused it, copy it instead";
 	}
 
 	/** Draws {@code view}; on the window's thread. */
@@ -171,6 +226,11 @@ public final class LauncherPanel extends JPanel
 	JButton reportButton()
 	{
 		return report;
+	}
+
+	JButton sendButton()
+	{
+		return send;
 	}
 
 	JLabel statusLabel()
