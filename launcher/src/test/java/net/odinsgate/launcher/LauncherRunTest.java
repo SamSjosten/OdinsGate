@@ -19,6 +19,7 @@ import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -52,6 +53,8 @@ public class LauncherRunTest
 		Manifest.Server checked;
 		Manifest checkedManifest;
 		Manifest.Pin fetched;
+		Set<String> pruned;
+		IOException pruneFailure;
 		List<String> command;
 		Path gameLog;
 		FakeProcess game;
@@ -77,6 +80,16 @@ public class LauncherRunTest
 				throw e;
 			}
 			return this.pin;
+		}
+
+		@Override
+		public void prune(Set<String> keepCommits) throws IOException
+		{
+			pruned = keepCommits;
+			if (pruneFailure != null)
+			{
+				throw pruneFailure;
+			}
 		}
 
 		@Override
@@ -295,6 +308,27 @@ public class LauncherRunTest
 		steps.fetchFailure = new IOException("raw.githubusercontent.com answered 503");
 		assertEquals(LauncherRun.EXIT_DOWNLOAD, run(options(), steps));
 		assertTrue(StatusFile.read(statusFile).detail().contains("503"));
+	}
+
+	@Test
+	public void aWholePinPrunesThePinsTheManifestNoLongerNames() throws Exception
+	{
+		FakeSteps steps = new FakeSteps();
+		assertEquals(0, run(options(), steps));
+		Set<String> named = new java.util.HashSet<>();
+		manifest.pins().forEach(pin -> named.add(pin.commit()));
+		assertEquals(named, steps.pruned, "every pin the signed manifest names is kept, and only those");
+
+		// A failed download prunes nothing; a prune that fails is logged and the game still runs.
+		steps = new FakeSteps();
+		steps.fetchFailure = new IOException("raw.githubusercontent.com answered 503");
+		run(options(), steps);
+		assertNull(steps.pruned);
+		steps = new FakeSteps();
+		steps.pruneFailure = new IOException("client.jar is open");
+		assertEquals(0, run(options(), steps));
+		String logged = logBytes.toString(StandardCharsets.UTF_8);
+		assertTrue(logged.contains("old RuneLite pins could not all be removed: client.jar is open"), logged);
 	}
 
 	@Test

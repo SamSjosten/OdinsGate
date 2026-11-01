@@ -13,9 +13,11 @@ import java.time.Clock;
 import java.time.Duration;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * One run of the launcher, from the start to the game's exit, in the plan's order: check the server (plain data,
@@ -36,6 +38,11 @@ public final class LauncherRun
 
 		/** The pin's jars for this system, hashed, and its bootstrap's JVM arguments. */
 		Launch.Pin fetch(Manifest.Pin pin, Platform platform) throws IOException, BootstrapException;
+
+		/** Deletes every cached pin but these, the ones the release manifest still names. */
+		default void prune(Set<String> keepCommits) throws IOException
+		{
+		}
 
 		/** Starts the game's command line with its output going to {@code gameLog}. */
 		Process start(List<String> command, Path gameLog) throws IOException;
@@ -112,6 +119,12 @@ public final class LauncherRun
 				RuneLiteCache cache = new RuneLiteCache(dataDir.resolve(RUNELITE_DIR));
 				Bootstrap bootstrap = cache.bootstrap(pin);
 				return new Launch.Pin(cache.jars(pin, bootstrap, platform), bootstrap.clientJvmArguments(platform));
+			}
+
+			@Override
+			public void prune(Set<String> keepCommits) throws IOException
+			{
+				new RuneLiteCache(dataDir.resolve(RUNELITE_DIR)).prune(keepCommits);
 			}
 
 			@Override
@@ -381,15 +394,33 @@ public final class LauncherRun
 			}
 			report.state(StatusFile.State.DOWNLOADING, "RuneLite " + pin.runelite() + " for revision "
 				+ report.revision + " (" + pin.commit().substring(0, 12) + ")");
+			Launch.Pin fetched;
 			try
 			{
-				return steps.fetch(pin, platform);
+				fetched = steps.fetch(pin, platform);
 			}
 			catch (IOException | BootstrapException e)
 			{
 				report.fail("RuneLite " + pin.runelite() + " could not be fetched: " + e.getMessage());
 				throw e;
 			}
+			// Only once the pin is whole: the folders of pins the signed manifest no longer names go, so old
+			// RuneLites don't pile up in the data folder. A folder that can't go now (a file still open) goes later.
+			Set<String> keep = new HashSet<>();
+			for (Manifest.Pin named : manifest.pins())
+			{
+				keep.add(named.commit());
+			}
+			keep.add(pin.commit());
+			try
+			{
+				steps.prune(keep);
+			}
+			catch (IOException e)
+			{
+				report.note("old RuneLite pins could not all be removed: " + e.getMessage(), true);
+			}
+			return fetched;
 		}
 
 		/**
