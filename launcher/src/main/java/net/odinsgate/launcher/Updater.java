@@ -368,7 +368,17 @@ public final class Updater
 		}
 		if (remote != null)
 		{
-			rotatePrimaryKeyIfNamed(remote, trusted);
+			List<PublicKey> rotated = rotatePrimaryKeyIfNamed(remote, trusted);
+			if (!rotated.equals(trusted))
+			{
+				// The rotation holds from this run on, not the next: should the recovery release's jars not come
+				// down, nothing the old primary signed (a kept manifest, a downloaded version) is taken instead.
+				trusted = rotated;
+				if (stored != null && !Signatures.verify(stored.bytes(), stored.signature(), trusted))
+				{
+					stored = null;
+				}
+			}
 		}
 		if (remote != null && (onDisk == null || !Arrays.equals(onDisk.bytes(), remote.bytes())))
 		{
@@ -492,25 +502,37 @@ public final class Updater
 
 	/**
 	 * A manifest signed by the backup key that names a new primary rotates the trust: from then on that key and the
-	 * backup are the trusted ones, and the old primary (lost, or leaked) signs nothing a friend takes.
+	 * backup are the trusted ones, and the old primary (lost, or leaked) signs nothing a friend takes. Returns the
+	 * keys the rest of this run trusts: {@code trusted} unchanged, or the new primary and the backup, even when the
+	 * keys file could not be written (the next run then rotates again from the same manifest).
 	 */
-	private void rotatePrimaryKeyIfNamed(Loaded remote, List<PublicKey> trusted)
+	private List<PublicKey> rotatePrimaryKeyIfNamed(Loaded remote, List<PublicKey> trusted)
 	{
 		String named = remote.manifest().nextPrimaryKey;
 		if (named == null || backupKey == null)
 		{
-			return;
+			return trusted;
 		}
 		if (!Signatures.verify(remote.bytes(), remote.signature(), List.of(backupKey)))
 		{
 			log.println("[updater] the manifest names a new primary key but isn't signed by the backup key: "
 				+ "not rotated");
-			return;
+			return trusted;
 		}
 		String current = Base64.getEncoder().encodeToString(trusted.get(0).getEncoded());
 		if (current.equals(named))
 		{
-			return;
+			return trusted;
+		}
+		PublicKey primary;
+		try
+		{
+			primary = Signatures.publicKey(named);
+		}
+		catch (IllegalArgumentException e)
+		{
+			log.println("[updater] the manifest names a new primary key that doesn't read: not rotated");
+			return trusted;
 		}
 		try
 		{
@@ -519,8 +541,10 @@ public final class Updater
 		}
 		catch (IOException e)
 		{
-			log.println("[updater] the new primary key could not be kept: " + e.getMessage());
+			log.println("[updater] the new primary key could not be kept: " + e.getMessage()
+				+ "; it is trusted for this run");
 		}
+		return List.of(primary, backupKey);
 	}
 
 	/** A manifest and its signature from {@code file} and {@code file.sig}, verified and parsed; null otherwise. */
