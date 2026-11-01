@@ -2,6 +2,7 @@ package net.odinsgate.launcher;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.sun.net.httpserver.HttpServer;
@@ -295,14 +296,16 @@ public class PinHealthTest
 			served.put("/static/" + COMMIT + "/bootstrap.json.sha256", sign(RUNELITE, bootstrap));
 			List<Manifest.Pin> table =
 				List.of(new Manifest.Pin(241, "1.13.4", COMMIT, RuneLiteCache.sha256(bootstrap)));
-			long started = System.nanoTime();
-			boolean healthy = new PinHealth(base + "/static/", base + "/config.json", List.of(RUNELITE.getPublic()),
-				Duration.ofSeconds(5), Duration.ofMillis(300), out).check(table);
-			long tookMillis = (System.nanoTime() - started) / 1_000_000;
+			// The download timeout is ten minutes and the jar's own 300 ms: a check that waited on the download one
+			// would run into the one-minute bound below, so passing at all proves the jar's own timeout was used,
+			// with a margin no slow runner comes near.
+			PinHealth check = new PinHealth(base + "/static/", base + "/config.json", List.of(RUNELITE.getPublic()),
+				Duration.ofMinutes(10), Duration.ofMillis(300), out);
+			boolean healthy = assertTimeoutPreemptively(Duration.ofMinutes(1), () -> check.check(table),
+				"the jar's own timeout, not the download one");
 			assertFalse(healthy, output());
 			assertTrue(output().contains("FAIL revision 241 (RuneLite 1.13.4 at cdcdcdcd): client.jar at http://"),
 				output());
-			assertTrue(tookMillis < 4000, "the jar's own timeout, not the download one: " + tookMillis + " ms");
 			assertTrue(output().contains("doesn't list 1.13.4 as outdated"), "the rest still ran: " + output());
 		}
 	}
