@@ -44,6 +44,8 @@ public class SelfTestTest
 		assertTrue(log().contains("[self-test] ok the child JVM from "), log());
 		assertTrue(log().contains("child: " + Loader.SELF_TEST_OK), log());
 		assertTrue(log().contains("child: [loader] self-test: 192.0.2.1:80 refused"), log());
+		assertTrue(log().contains("[self-test] ok a report the server was too busy for was kept, then sent at the next "
+			+ "try as " + SelfTest.FakeServer.REPORT_ID), log());
 		assertTrue(log().contains("no display here") || log().contains("[self-test] ok the window opened as"), log());
 		assertTrue(log().contains("[self-test] passed"), log());
 		assertTrue(Files.isRegularFile(dir.resolve(SelfTest.DIR).resolve(SelfTest.CHILD_LOG)), "the child's output");

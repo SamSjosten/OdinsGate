@@ -91,7 +91,8 @@ final class ProblemReport
 	/**
 	 * {@code report} with what the friend wrote about the problem after its first lines (the system, versions and
 	 * revision), before the steps and logs; {@code report} as it is when they wrote nothing. Their words go through
-	 * the same scrub as a log line, line by line, and are cut at {@link #WHAT_HAPPENED_CHARS}.
+	 * the same scrub as a log line, line by line, and only then are cut at {@link #WHAT_HAPPENED_CHARS}: a cut first
+	 * could split a path or a password line so the scrub no longer knows it.
 	 */
 	static String withWhatHappened(String report, String words, Path dataDir)
 	{
@@ -100,13 +101,13 @@ final class ProblemReport
 		{
 			return report;
 		}
-		if (text.length() > WHAT_HAPPENED_CHARS)
-		{
-			text = text.substring(0, WHAT_HAPPENED_CHARS);
-		}
 		String folder = dataDir.toString();
-		StringBuilder section = new StringBuilder("\n").append(WHAT_HAPPENED).append('\n');
-		text.lines().forEach(line -> section.append(scrub(line, folder)).append('\n'));
+		StringBuilder scrubbed = new StringBuilder();
+		text.lines().forEach(line -> scrubbed.append(scrub(line, folder)).append('\n'));
+		String kept = scrubbed.length() > WHAT_HAPPENED_CHARS
+			? scrubbed.substring(0, WHAT_HAPPENED_CHARS) + "\n"
+			: scrubbed.toString();
+		StringBuilder section = new StringBuilder("\n").append(WHAT_HAPPENED).append('\n').append(kept);
 		int steps = report.indexOf("\n== ");
 		return steps < 0 ? report + section : report.substring(0, steps) + "\n" + section.substring(1) + report.substring(steps);
 	}

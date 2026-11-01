@@ -72,13 +72,22 @@ final class ReportSender
 		this.http = HttpClient.newBuilder().connectTimeout(timeout).build();
 	}
 
-	/** Sends {@code report}, keeping it in the outbox when the server can't take it now. Blocks; never throws. */
+	/**
+	 * Sends {@code report}, keeping it in the outbox when the server can't take it now. It goes in the outbox before
+	 * it is sent and leaves once the server has answered for good, so a launcher closed mid-send (a server that never
+	 * answers holds the send for {@link #TIMEOUT}) still has it next start. Blocks; never throws.
+	 */
 	Outcome send(String report, Instant now)
 	{
+		Path kept = keep(report, now);
 		Outcome outcome = post(report);
 		if (outcome instanceof Outcome.Kept)
 		{
-			return new Outcome.Kept(keep(report, now));
+			return new Outcome.Kept(kept != null);
+		}
+		if (kept != null)
+		{
+			delete(kept);
 		}
 		return outcome;
 	}
@@ -153,25 +162,25 @@ final class ReportSender
 		return new Outcome.Refused(status + (body.isEmpty() ? "" : " " + firstLine(body)));
 	}
 
-	/** Saves {@code report} in the outbox, dropping the oldest beyond {@link #OUTBOX_LIMIT}; whether it was saved. */
-	private boolean keep(String report, Instant now)
+	/** Saves {@code report} in the outbox, dropping the oldest beyond {@link #OUTBOX_LIMIT}; its file, or null. */
+	private Path keep(String report, Instant now)
 	{
+		Path file = outbox.resolve(now.toEpochMilli() + "-" + Integer.toHexString(report.hashCode()) + SUFFIX);
 		try
 		{
 			Files.createDirectories(outbox);
-			Atomically.write(outbox.resolve(now.toEpochMilli() + "-" + Integer.toHexString(report.hashCode()) + SUFFIX),
-				report);
+			Atomically.write(file, report);
 		}
 		catch (IOException e)
 		{
-			return false;
+			return null;
 		}
 		List<Path> all = waiting();
 		for (int i = 0; i < all.size() - OUTBOX_LIMIT; i++)
 		{
 			delete(all.get(i));
 		}
-		return true;
+		return file;
 	}
 
 	/** The reports in the outbox, oldest first (their names start with the time they were kept). */

@@ -150,6 +150,9 @@ public final class LauncherPanel extends JPanel
 		send.setText(sentLabel(outcome));
 		send.setEnabled(false);
 		sendLabelBack.restart();
+		// The outcome is longer than the button's own label; the window grows rather than let it cover Retry.
+		revalidate();
+		makeRoom();
 	}
 
 	static String sentLabel(ReportSender.Outcome outcome)

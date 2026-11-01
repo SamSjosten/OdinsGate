@@ -14,6 +14,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -82,6 +83,44 @@ public class ReportSenderTest
 		assertEquals(List.of("R-0007"), sender.resend());
 		assertEquals(List.of(), sender.waiting());
 		assertEquals("POST text/plain; charset=UTF-8 first", received.get(1));
+	}
+
+	@Test
+	public void aReportIsInTheOutboxWhileItIsBeingSent() throws Exception
+	{
+		// A server that holds its answer: a launcher closed now must still find the report at its next start.
+		CountDownLatch answer = new CountDownLatch(1);
+		server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+		server.createContext(ReportSender.PATH, exchange ->
+		{
+			exchange.getRequestBody().readAllBytes();
+			try
+			{
+				answer.await();
+			}
+			catch (InterruptedException e)
+			{
+				Thread.currentThread().interrupt();
+			}
+			byte[] body = "R-0009\n".getBytes(StandardCharsets.UTF_8);
+			exchange.sendResponseHeaders(201, body.length);
+			exchange.getResponseBody().write(body);
+			exchange.close();
+		});
+		server.start();
+		ReportSender sender = sender();
+		ReportSender.Outcome[] outcome = new ReportSender.Outcome[1];
+		Thread sending = new Thread(() -> outcome[0] = sender.send("report", NOW));
+		sending.start();
+		for (int i = 0; i < 500 && sender.waiting().isEmpty(); i++)
+		{
+			Thread.sleep(10);
+		}
+		assertEquals(1, sender.waiting().size(), "kept before the server answered");
+		answer.countDown();
+		sending.join();
+		assertEquals(new ReportSender.Outcome.Sent("R-0009"), outcome[0]);
+		assertEquals(List.of(), sender.waiting(), "gone once it was sent");
 	}
 
 	@Test

@@ -131,5 +131,9 @@ public class ProblemReportTest
 			+ "\nit froze\n" + ProblemReport.LEFT_OUT + "\nsee <data>/logs\n\n== last steps and checks ==\nstep\n", with);
 		String longer = ProblemReport.withWhatHappened(report, "x".repeat(ProblemReport.WHAT_HAPPENED_CHARS + 50), data);
 		assertTrue(longer.contains("x".repeat(ProblemReport.WHAT_HAPPENED_CHARS) + "\n\n=="), longer.length() + "");
+		// A cut that would fall inside the data folder's path comes after the scrub, so no piece of the name is left.
+		String split = ProblemReport.withWhatHappened(report,
+			"x".repeat(ProblemReport.WHAT_HAPPENED_CHARS - 10) + data + "/logs", data);
+		assertFalse(split.contains("/home/jan"), split);
 	}
 }

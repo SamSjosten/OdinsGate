@@ -15,12 +15,14 @@ import java.nio.file.Path;
 import java.security.GeneralSecurityException;
 import java.security.KeyStore;
 import java.time.Duration;
+import java.time.Instant;
 import javax.net.ssl.TrustManager;
 import javax.net.ssl.TrustManagerFactory;
 import javax.net.ssl.X509TrustManager;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import javax.swing.JFrame;
 import javax.swing.SwingUtilities;
 
@@ -88,6 +90,7 @@ public final class SelfTest
 		{
 			server = FakeServer.start();
 			test.serverCheck(server);
+			test.reports(server);
 			if (java != null)
 			{
 				test.childJvm(java, server);
@@ -206,6 +209,44 @@ public final class SelfTest
 	}
 
 	/**
+	 * A problem report as the Send button sends it: the fake server is busy the first time, so the report waits in
+	 * an outbox under {@value #DIR}, and takes it the second, so a resend empties it and brings back its number.
+	 */
+	private void reports(FakeServer server)
+	{
+		Path outbox = dataDir.resolve(DIR).resolve("reports");
+		ReportSender sender = new ReportSender(server.host(), server.httpPort(), outbox);
+		for (Path left : sender.waiting())
+		{
+			try
+			{
+				Files.deleteIfExists(left);
+			}
+			catch (IOException ignored)
+			{
+				// A report left from an earlier self-test is only counted below as one too many.
+			}
+		}
+		String report = Names.APP_NAME + " problem report, self-test\nlauncher " + Main.VERSION + "\n";
+		ReportSender.Outcome first = sender.send(report, Instant.now());
+		if (!(first instanceof ReportSender.Outcome.Kept kept) || !kept.saved() || sender.waiting().size() != 1)
+		{
+			fail("a report the server couldn't take wasn't kept for later: " + first + ", " + sender.waiting().size()
+				+ " waiting");
+			return;
+		}
+		List<String> sent = sender.resend();
+		if (sent.equals(List.of(FakeServer.REPORT_ID)) && sender.waiting().isEmpty())
+		{
+			ok("a report the server was too busy for was kept, then sent at the next try as " + sent.get(0));
+		}
+		else
+		{
+			fail("the kept report wasn't sent again: " + sent + ", " + sender.waiting().size() + " still waiting");
+		}
+	}
+
+	/**
 	 * The game's command line as a launch builds it, with the loader's self-test in place of the jars: the child
 	 * must start from the bundled java, print {@value Loader#SELF_TEST_OK} and exit 0 within {@link #CHILD_TIMEOUT}.
 	 */
@@ -293,13 +334,14 @@ public final class SelfTest
 			return;
 		}
 		boolean[] shown = new boolean[1];
+		boolean[] fits = new boolean[1];
 		String[] title = new String[1];
 		try
 		{
 			SwingUtilities.invokeAndWait(() ->
 			{
 				JFrame frame = new JFrame(Names.APP_NAME);
-				LauncherPanel panel = new LauncherPanel(() -> { }, () -> { }, () -> { });
+				LauncherPanel panel = new LauncherPanel(() -> { }, () -> { }, () -> { }, () -> { });
 				panel.render(new Screen.View(Screen.Phase.CHECKING, "Self-test", "The window opens and closes.",
 					true, false, false, "", true));
 				frame.setContentPane(panel);
@@ -308,6 +350,9 @@ public final class SelfTest
 				frame.setVisible(true);
 				shown[0] = frame.isShowing();
 				title[0] = frame.getTitle();
+				// The longest outcome on the Send button must still fit: the window grows to it.
+				panel.reportSent(new ReportSender.Outcome.Kept(true));
+				fits[0] = frame.getWidth() >= frame.getPreferredSize().width;
 				frame.dispose();
 			});
 		}
@@ -319,6 +364,14 @@ public final class SelfTest
 		if (shown[0] && Names.APP_NAME.equals(title[0]))
 		{
 			ok("the window opened as \"" + title[0] + "\" and closed");
+			if (fits[0])
+			{
+				ok("the window grew to fit a report's outcome on the Send button");
+			}
+			else
+			{
+				fail("a report's outcome on the Send button didn't fit the window");
+			}
 		}
 		else
 		{
@@ -359,6 +412,8 @@ public final class SelfTest
 	static final class FakeServer
 	{
 		static final String LOOPBACK = "127.0.0.1";
+		/** The number the fake server gives the report it takes; it is busy (503) for the first one it is sent. */
+		static final String REPORT_ID = "R-0001";
 		private static final byte[] LOOPBACK_BYTES = {127, 0, 0, 1};
 
 		private final HttpServer web;
@@ -390,6 +445,26 @@ public final class SelfTest
 		{
 			InetAddress loopback = InetAddress.getByAddress(LOOPBACK, LOOPBACK_BYTES);
 			HttpServer web = HttpServer.create(new InetSocketAddress(loopback, 0), 0);
+			AtomicInteger reports = new AtomicInteger();
+			web.createContext(ReportSender.PATH, exchange ->
+			{
+				exchange.getRequestBody().readAllBytes();
+				byte[] bytes = (REPORT_ID + "\n").getBytes(StandardCharsets.UTF_8);
+				if (!"POST".equals(exchange.getRequestMethod()))
+				{
+					exchange.sendResponseHeaders(405, -1);
+				}
+				else if (reports.getAndIncrement() == 0)
+				{
+					exchange.sendResponseHeaders(503, -1);
+				}
+				else
+				{
+					exchange.sendResponseHeaders(201, bytes.length);
+					exchange.getResponseBody().write(bytes);
+				}
+				exchange.close();
+			});
 			web.createContext("/", exchange ->
 			{
 				String body = switch (exchange.getRequestURI().getPath())
