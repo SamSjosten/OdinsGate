@@ -58,6 +58,22 @@ public class MainTest
 	/** A shell whose GitHub is a map: the manifest for {@code version} naming {@code jar}, signed by {@code key}. */
 	private Main.Updaters fakeGitHub(java.security.KeyPair key, String version, String minBootstrap, byte[] jar)
 	{
+		java.util.Map<String, byte[]> served = release(key, version, minBootstrap, jar);
+		return (dataDir, log) -> new Updater(dataDir, "0.1.0", null, List.of(key.getPublic()), "http://gh", uri ->
+		{
+			byte[] body = served.get(uri.toString());
+			if (body == null)
+			{
+				throw new java.io.IOException(uri + " answered 404");
+			}
+			return body;
+		}, (from, to) -> Files.move(from, to), Thread::sleep, java.time.Clock.systemUTC(), log);
+	}
+
+	/** What the fake GitHub serves for a release: the signed manifest and the one jar, by URL. */
+	private static java.util.Map<String, byte[]> release(java.security.KeyPair key, String version,
+		String minBootstrap, byte[] jar)
+	{
 		String json = "{ \"format\": 1, \"version\": \"" + version + "\", \"minBootstrapVersion\": \"" + minBootstrap
 			+ "\", \"server\": { \"host\": \"odinsgate.net\", \"gamePort\": 43594, \"httpPort\": 43595, \"modulus\": \""
 			+ ManifestTest.MODULUS + "\" }, \"pins\": [ { \"revision\": 241, \"runelite\": \"1.13.4\", \"commit\": \""
@@ -69,15 +85,7 @@ public class MainTest
 			"http://gh/latest/download/manifest.json", bytes,
 			"http://gh/latest/download/manifest.json.sig", sign(key, bytes).getBytes(StandardCharsets.UTF_8),
 			"http://gh/download/v" + version + "/odinsgate-launcher-" + version + ".jar", jar);
-		return (dataDir, log) -> new Updater(dataDir, "0.1.0", null, List.of(key.getPublic()), "http://gh", uri ->
-		{
-			byte[] body = served.get(uri.toString());
-			if (body == null)
-			{
-				throw new java.io.IOException(uri + " answered 404");
-			}
-			return body;
-		}, (from, to) -> Files.move(from, to), Thread::sleep, java.time.Clock.systemUTC(), log);
+		return served;
 	}
 
 	@Test
@@ -143,6 +151,56 @@ public class MainTest
 		}, (from, to) -> Files.move(from, to), Thread::sleep, java.time.Clock.systemUTC(), log);
 		assertEquals(Main.EXIT_MANIFEST, Main.run(new String[]{"--auto", "--home", home.toString()}, out, nothing));
 		assertTrue(output().contains("needs the internet once"), output());
+	}
+
+	@Test
+	public void noManifestAsksAndTryingAgainRunsOnceTheInternetIsBack() throws Exception
+	{
+		java.security.KeyPair key = key();
+		Path home = dir.resolve("home");
+		java.util.Map<String, byte[]> served = release(key, "0.2.0", "0.1.0", FakeVersion.jar("fake 0.2.0", 42));
+		java.util.concurrent.atomic.AtomicBoolean internet = new java.util.concurrent.atomic.AtomicBoolean();
+		Main.Updaters flaky = (dataDir, log) -> new Updater(dataDir, "0.1.0", null, List.of(key.getPublic()),
+			"http://gh", uri ->
+		{
+			if (!internet.get())
+			{
+				throw new java.io.IOException("no internet");
+			}
+			byte[] body = served.get(uri.toString());
+			if (body == null)
+			{
+				throw new java.io.IOException(uri + " answered 404");
+			}
+			return body;
+		}, (from, to) -> Files.move(from, to), Thread::sleep, java.time.Clock.systemUTC(), log);
+		List<String> asked = new ArrayList<>();
+		Main.Asks tryAgainOnce = (why, log) ->
+		{
+			asked.add(why);
+			internet.set(true);
+			return asked.size() == 1;
+		};
+		int code = Main.run(new String[]{"--home", home.toString()}, out, flaky, null, tryAgainOnce);
+		assertEquals(42, code, output());
+		assertEquals(1, asked.size(), "asked once, then the run went on");
+		assertTrue(asked.get(0).contains("needs the internet once"), asked.toString());
+		assertTrue(output().contains("[launcher] trying again"), output());
+	}
+
+	@Test
+	public void noManifestAndCloseExitsWithAManifestError() throws Exception
+	{
+		Path home = dir.resolve("home");
+		Main.Updaters nothing = (dataDir, log) -> new Updater(dataDir, "0.1.0", null, List.of(key().getPublic()),
+			"http://gh", uri ->
+		{
+			throw new java.io.IOException("no internet");
+		}, (from, to) -> Files.move(from, to), Thread::sleep, java.time.Clock.systemUTC(), log);
+		List<String> asked = new ArrayList<>();
+		assertEquals(Main.EXIT_MANIFEST, Main.run(new String[]{"--home", home.toString()}, out, nothing, null,
+			(why, log) -> asked.add(why) && false));
+		assertEquals(1, asked.size());
 	}
 
 	@Test

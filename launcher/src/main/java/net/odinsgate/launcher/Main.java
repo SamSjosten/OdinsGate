@@ -49,6 +49,15 @@ public final class Main
 		int launch(LaunchOptions options, Manifest manifest, Path dataDir, PrintStream log);
 	}
 
+	/**
+	 * What a friend is asked when there is no manifest to run with: true to try again. The packaged launcher has no
+	 * console, so without this window it would simply vanish.
+	 */
+	interface Asks
+	{
+		boolean tryAgain(String why, PrintStream log);
+	}
+
 	private Main()
 	{
 	}
@@ -76,6 +85,15 @@ public final class Main
 
 	/** As above, with the launch itself made by {@code launches}; null for the real one. */
 	static int run(String[] args, PrintStream out, Updaters updaters, Launches launches)
+	{
+		return run(args, out, updaters, launches, null);
+	}
+
+	/**
+	 * As above, with the no-manifest question asked by {@code asks}; null for the real one, a window unless the run
+	 * is {@code --auto} or there is no screen.
+	 */
+	static int run(String[] args, PrintStream out, Updaters updaters, Launches launches, Asks asks)
 	{
 		LaunchOptions options;
 		try
@@ -126,12 +144,19 @@ public final class Main
 				}
 				return launcher.launch(options, manifest, dataDir, log);
 			}
+			Asks asking = asks != null ? asks : options.auto() || GraphicsEnvironment.isHeadless()
+				? (why, l) -> false : LauncherWindow::noManifest;
 			Updater updater = updaters.updater(dataDir, log);
 			Updater.Outcome outcome = updater.update();
-			if (outcome instanceof Updater.NoManifest none)
+			while (outcome instanceof Updater.NoManifest none)
 			{
 				log.println("[launcher] " + none.why());
-				return EXIT_MANIFEST;
+				if (!asking.tryAgain(none.why(), log))
+				{
+					return EXIT_MANIFEST;
+				}
+				log.println("[launcher] trying again");
+				outcome = updater.update();
 			}
 			if (outcome instanceof Updater.NeedsInstaller needs)
 			{

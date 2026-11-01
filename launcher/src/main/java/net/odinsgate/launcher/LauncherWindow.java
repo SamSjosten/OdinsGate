@@ -121,6 +121,22 @@ public final class LauncherWindow
 		}
 	}
 
+	/**
+	 * Says why there is nothing to run (on a fresh install, most often no internet yet) and offers to try again;
+	 * true when the friend chose to. Before any launcher window exists, so it stands alone.
+	 */
+	static boolean noManifest(String why, PrintStream log)
+	{
+		javax.swing.JLabel text = new javax.swing.JLabel();
+		text.putClientProperty(LauncherPanel.HTML_OFF, Boolean.TRUE);
+		text.setText(Names.APP_NAME + " can't start yet: " + why);
+		String[] choices = {"Try again", "Close"};
+		int chosen = javax.swing.JOptionPane.showOptionDialog(null, text, Names.APP_NAME,
+			javax.swing.JOptionPane.DEFAULT_OPTION, javax.swing.JOptionPane.WARNING_MESSAGE, null, choices,
+			choices[0]);
+		return chosen == 0;
+	}
+
 	static void stop(ScheduledExecutorService pool)
 	{
 		pool.shutdown();
