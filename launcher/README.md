@@ -54,9 +54,10 @@ The core that later PRs build on; no window or releases yet:
   points by their bytecode, not by name: the server's RSA key (in the one injected-client class that also holds the
   exponent, and ours may not have more digits than the client's), `"127.0.0.1"` where `String.endsWith` takes it
   (the jav_config host check, made `""`), `ClientLoader.updateVanilla` when the jar has it (made to return at once,
-  so a forged config can never download a gamepack), and `".jagex.com"` in `downloadConfig` (made `""`). It also
-  checks, without patching, that `RuneLiteModule` reads `-Drunelite.http-service.url` and `RuntimeConfigLoader`
-  reads `-Drunelite.rtconf`. A missing point stops the launch with every gap named; each patch carries the exact
+  so a forged config can never download a gamepack; current RuneLite has none, and any other `ClientLoader` method
+  that reads or verifies a jar, as that routine did, stops the launch), and `".jagex.com"` in `downloadConfig`
+  (made `""`). It also checks, without patching, that `RuneLiteModule` reads `-Drunelite.http-service.url` and
+  `RuntimeConfigLoader` reads `-Drunelite.rtconf`. A missing point stops the launch with every gap named; each patch carries the exact
   count the scan found and refuses a class that no longer matches it, so a RuneLite that changed under our pin never
   runs half-patched. The report names jars, classes, methods and counts, never a key. The tests build their own fake
   client with ASM (`FakeClient`), so no RuneLite or Jagex jar is ever in git, and see each patch through its effect

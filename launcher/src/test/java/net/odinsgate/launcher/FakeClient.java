@@ -103,6 +103,41 @@ final class FakeClient
 		return cw.toByteArray();
 	}
 
+	/**
+	 * A ClientLoader as current RuneLite has it, with no {@code updateVanilla}, plus {@code fetchGamepack}: the old
+	 * routine under a new name, which opens a {@code JarInputStream} as a gamepack download does.
+	 */
+	static byte[] clientLoaderWithRenamedGamepackDownload()
+	{
+		ClassWriter cw = newClass(Preflight.CLIENT_LOADER);
+		cw.visitField(ACC_PUBLIC | ACC_STATIC, "lastHost", "Ljava/lang/String;", null, null).visitEnd();
+		defaultCtor(cw, Preflight.CLIENT_LOADER);
+		MethodVisitor mv = cw.visitMethod(ACC_PUBLIC, "fetchGamepack", "(Ljava/io/InputStream;)V", null, null);
+		mv.visitCode();
+		mv.visitTypeInsn(NEW, "java/util/jar/JarInputStream");
+		mv.visitInsn(DUP);
+		mv.visitVarInsn(ALOAD, 1);
+		mv.visitMethodInsn(INVOKESPECIAL, "java/util/jar/JarInputStream", "<init>", "(Ljava/io/InputStream;)V", false);
+		mv.visitInsn(POP);
+		mv.visitInsn(RETURN);
+		mv.visitMaxs(0, 0);
+		mv.visitEnd();
+		downloadConfig(cw, Preflight.JAGEX_HOST);
+		cw.visitEnd();
+		return cw.toByteArray();
+	}
+
+	/** A ClientLoader as current RuneLite has it: {@code downloadConfig} and no {@code updateVanilla}. */
+	static byte[] clientLoaderWithoutUpdateVanilla()
+	{
+		ClassWriter cw = newClass(Preflight.CLIENT_LOADER);
+		cw.visitField(ACC_PUBLIC | ACC_STATIC, "lastHost", "Ljava/lang/String;", null, null).visitEnd();
+		defaultCtor(cw, Preflight.CLIENT_LOADER);
+		downloadConfig(cw, Preflight.JAGEX_HOST);
+		cw.visitEnd();
+		return cw.toByteArray();
+	}
+
 	/** A RuneLite-classes jar whose RuneLiteModule does not read the http-service URL property. */
 	static Path clientJarWithDeafModule(Path dir) throws IOException
 	{
@@ -182,8 +217,16 @@ final class FakeClient
 		mv.visitInsn(ATHROW);
 		mv.visitMaxs(0, 0);
 		mv.visitEnd();
-		// public RSConfig downloadConfig() { lastHost = ".jagex.com"; return null; }  — the patch makes the host "".
-		mv = cw.visitMethod(ACC_PUBLIC, "downloadConfig", "()Lnet/runelite/client/rs/RSConfig;", null, null);
+		downloadConfig(cw, host);
+		cw.visitEnd();
+		return cw.toByteArray();
+	}
+
+	/** {@code public RSConfig downloadConfig() { lastHost = host; return null; }}: the patch makes the host "". */
+	private static void downloadConfig(ClassWriter cw, String host)
+	{
+		MethodVisitor mv = cw.visitMethod(ACC_PUBLIC, "downloadConfig", "()Lnet/runelite/client/rs/RSConfig;", null,
+			null);
 		mv.visitCode();
 		mv.visitLdcInsn(host);
 		mv.visitFieldInsn(PUTSTATIC, Preflight.CLIENT_LOADER, "lastHost", "Ljava/lang/String;");
@@ -191,8 +234,6 @@ final class FakeClient
 		mv.visitInsn(ARETURN);
 		mv.visitMaxs(0, 0);
 		mv.visitEnd();
-		cw.visitEnd();
-		return cw.toByteArray();
 	}
 
 	/** A class that really reads the property: {@code property()} returns {@code System.getProperty(name)}. */

@@ -84,6 +84,33 @@ public class PreflightTest
 	}
 
 	@Test
+	public void aClientLoaderWithoutUpdateVanillaAsCurrentRuneLiteHasItPasses() throws Exception
+	{
+		List<Path> jars = List.of(
+			FakeClient.injectedJar(dir, FakeClient.injectedClient()),
+			FakeClient.clientJar(dir, FakeClient.clientLoaderWithoutUpdateVanilla()));
+		Preflight scan = Preflight.scan(jars, FakeClient.OUR_MODULUS);
+		assertTrue(scan.complete(), () -> scan.missing().toString());
+		assertTrue(scan.report().stream().anyMatch(line -> line.contains("updateVanilla absent")),
+			() -> scan.report().toString());
+	}
+
+	@Test
+	public void aGamepackDownloadUnderAnotherNameIsRefused() throws Exception
+	{
+		// No updateVanilla to stop, but fetchGamepack opens a JarInputStream: the routine moved, so the launch stops
+		// rather than relax the config's host check with a gamepack download left running.
+		List<Path> jars = List.of(
+			FakeClient.injectedJar(dir, FakeClient.injectedClient()),
+			FakeClient.clientJar(dir, FakeClient.clientLoaderWithRenamedGamepackDownload()));
+		Preflight scan = Preflight.scan(jars, FakeClient.OUR_MODULUS);
+		assertFalse(scan.complete());
+		assertTrue(scan.missing().stream()
+			.anyMatch(m -> m.contains("ClientLoader.fetchGamepack reads or verifies a jar")),
+			() -> scan.missing().toString());
+	}
+
+	@Test
 	public void aClientThatDoesNotReadOurWorldPropertyIsRefused() throws Exception
 	{
 		List<Path> jars = List.of(
