@@ -23,6 +23,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -51,6 +52,8 @@ public class RuneLiteCacheTest
 	private HttpServer web;
 	private final Map<String, byte[]> served = new HashMap<>();
 	private final Map<String, AtomicInteger> hits = new ConcurrentHashMap<>();
+	private final Set<String> stalled = ConcurrentHashMap.newKeySet();
+	private final CountDownLatch release = new CountDownLatch(1);
 	private byte[] bootstrapBytes;
 	private Manifest.Pin pin;
 
@@ -92,6 +95,24 @@ public class RuneLiteCacheTest
 			String path = exchange.getRequestURI().getPath();
 			hits.computeIfAbsent(path, p -> new AtomicInteger()).incrementAndGet();
 			byte[] body = served.get(path);
+			if (body != null && stalled.contains(path))
+			{
+				// The headers and half the body, then nothing until the test ends: a download that stalls.
+				exchange.sendResponseHeaders(200, body.length);
+				OutputStream out = exchange.getResponseBody();
+				out.write(body, 0, body.length / 2);
+				out.flush();
+				try
+				{
+					release.await();
+				}
+				catch (InterruptedException e)
+				{
+					Thread.currentThread().interrupt();
+				}
+				exchange.close();
+				return;
+			}
 			if (body == null)
 			{
 				exchange.sendResponseHeaders(404, -1);
@@ -123,6 +144,7 @@ public class RuneLiteCacheTest
 	@AfterEach
 	public void stop()
 	{
+		release.countDown();
 		web.stop(0);
 	}
 
@@ -144,6 +166,25 @@ public class RuneLiteCacheTest
 	{
 		return new RuneLiteCache(root, "http://" + LOOPBACK.getHostAddress() + ":1/static/",
 			List.of(RUNELITE.getPublic()), TIMEOUT);
+	}
+
+	@Test
+	public void aJarWhoseBodyStallsFailsAtItsDeadlineInsteadOfHanging() throws Exception
+	{
+		stalled.add("/jars/client.jar");
+		RuneLiteCache cache = cache();
+		Bootstrap bootstrap = cache.bootstrap(pin);
+		IOException stall = assertThrows(IOException.class, () -> cache.jars(pin, bootstrap, WINDOWS));
+		assertTrue(stall.getMessage().contains("client.jar didn't arrive whole within"), stall.getMessage());
+		assertFalse(Files.exists(root.resolve(COMMIT).resolve("client.jar")), "nothing half-written is kept");
+	}
+
+	@Test
+	public void aJarsDeadlineGrowsWithItsSize()
+	{
+		RuneLiteCache cache = cache();
+		assertEquals(TIMEOUT, cache.deadlineFor(0));
+		assertEquals(TIMEOUT.plusSeconds(10), cache.deadlineFor(10 * RuneLiteCache.SLOWEST_BYTES_PER_SECOND));
 	}
 
 	@Test
