@@ -240,7 +240,9 @@ public final class Loader
 			Integer.parseInt(first.substring(colon + 1)));
 		try
 		{
-			ConnectGuard guard = ConnectGuard.install(allowed, log);
+			// No name is looked up: the self-test runs offline, and a slow resolver must not use up its time. The
+			// fake server is on a loopback address and the RuneLite names are judged by name, as the game's are.
+			ConnectGuard guard = ConnectGuard.install(allowed, log, ConnectGuard.NO_LOOKUPS);
 			try (Socket socket = new Socket())
 			{
 				socket.connect(target, SELF_TEST_CONNECT_MILLIS);

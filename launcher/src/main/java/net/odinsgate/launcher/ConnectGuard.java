@@ -110,11 +110,26 @@ public final class ConnectGuard extends ProxySelector implements Closeable
 	 */
 	public static ConnectGuard install(List<String> endpoints, PrintStream log) throws IOException
 	{
+		return install(endpoints, log, InetAddress::getAllByName);
+	}
+
+	/** {@link #install(List, PrintStream)} with names resolved by {@code resolver}: the self-test looks none up. */
+	static ConnectGuard install(List<String> endpoints, PrintStream log, Resolver resolver) throws IOException
+	{
 		Security.setProperty("networkaddress.cache.ttl", Long.toString(RESOLVE_AGAIN_AFTER_SECONDS));
-		ConnectGuard guard = new ConnectGuard(endpoints, log);
+		ConnectGuard guard = new ConnectGuard(endpoints, log, resolver, System::nanoTime);
 		ProxySelector.setDefault(guard);
 		return guard;
 	}
+
+	/**
+	 * A resolver that never asks DNS: every name is "unknown", so the guard allows the listed names by name only.
+	 * The self-test uses it so a slow or missing resolver can't hold it up; the game itself never does.
+	 */
+	static final Resolver NO_LOOKUPS = host ->
+	{
+		throw new UnknownHostException("not looked up: " + host);
+	};
 
 	/** The allowed endpoints, as {@code host:port}, hosts lowercased. */
 	public Set<String> endpoints()
