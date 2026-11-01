@@ -5,7 +5,9 @@ import java.io.PrintStream;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.net.InetSocketAddress;
+import java.net.Proxy;
 import java.net.Socket;
+import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -31,7 +33,9 @@ import javax.swing.UIManager;
  * --main &lt;class&gt;        RuneLite's main class
  * --                    everything after it is RuneLite's own command line
  * --self-test           first: no jars, no RuneLite; the guard is set for the --allow endpoints, the first is reached
- *                       through it, a host that isn't allowed is refused, and {@value #SELF_TEST_OK} is printed
+ *                       through it, a host that isn't allowed is refused, RuneLite's own servers
+ *                       ({@link #RUNELITE_ENDPOINTS}) are let through and its API host is not (both decided without
+ *                       connecting, so the test needs no network), and {@value #SELF_TEST_OK} is printed
  *                       ({@link SelfTest}, which starts this child from the bundled runtime)
  * </pre>
  * Exit codes: {@value #EXIT_USAGE} for a bad command line, {@value #EXIT_PATCH} when the pin no longer fits the
@@ -102,9 +106,18 @@ public final class Loader
 	/** The arguments of a self-test child: the endpoints the guard allows, as for a game, and no jars. */
 	public static List<String> selfTestArguments(Manifest.Server server)
 	{
-		return List.of(SELF_TEST, "--allow", server.host() + ":" + server.gamePort(),
-			"--allow", server.host() + ":" + server.httpPort());
+		List<String> args = new ArrayList<>(List.of(SELF_TEST, "--allow", server.host() + ":" + server.gamePort(),
+			"--allow", server.host() + ":" + server.httpPort()));
+		for (String endpoint : RUNELITE_ENDPOINTS)
+		{
+			args.add("--allow");
+			args.add(endpoint);
+		}
+		return List.copyOf(args);
 	}
+
+	/** A RuneLite host the game may not reach: its API, which our server stands in for. */
+	static final String RUNELITE_API = "https://api.runelite.net";
 
 	/** Parses the command line; an {@link IllegalArgumentException} says what is wrong with it. */
 	static Options parse(String[] args)
@@ -249,6 +262,23 @@ public final class Loader
 					+ " connection(s), not the one");
 				return EXIT_START;
 			}
+			// The production policy for RuneLite's own servers, decided by the guard without a connection: the Plugin
+			// Hub and static data go direct, its API host is still sent to the refuser.
+			for (String endpoint : RUNELITE_ENDPOINTS)
+			{
+				if (!guard.select(URI.create("https://" + endpoint)).equals(List.of(Proxy.NO_PROXY)))
+				{
+					log.println("[loader] self-test FAILED: " + endpoint + " is not let through");
+					return EXIT_START;
+				}
+			}
+			log.println("[loader] self-test: " + String.join(", ", RUNELITE_ENDPOINTS) + " let through");
+			if (guard.select(URI.create(RUNELITE_API)).equals(List.of(Proxy.NO_PROXY)))
+			{
+				log.println("[loader] self-test FAILED: " + RUNELITE_API + " is let through");
+				return EXIT_START;
+			}
+			log.println("[loader] self-test: " + RUNELITE_API + " refused");
 		}
 		catch (IOException e)
 		{

@@ -207,7 +207,9 @@ Friends install one file for their system and nothing else: the installer carrie
   ready, that the
   game's command line exactly as `ClientCommand` builds it starts a child JVM from that java on this code's jars
   (`Loader --self-test`: the connect guard set, the fake game port reached through it, `192.0.2.1:80` refused by the
-  guard itself and counted, so a guard that isn't there can't pass), and, where there is a display, that the window
+  guard itself and counted, so a guard that isn't there can't pass, and the production policy for RuneLite's own
+  servers decided without a connection: `repo.runelite.net` and `static.runelite.net` let through, `api.runelite.net`
+  refused), and, where there is a display, that the window
   opens titled Odin's Gate and closes. Each step is `[self-test] ok` or `FAIL` in the launcher's log; exit 0 or 70.
   Its files go under `<data>/self-test/`.
 - The scan (`ImageScan`): `appImageScan` runs it from the image's own runtime and jar over the image: no name a

@@ -205,14 +205,28 @@ public class LoaderTest
 		{
 			String allowed = "127.0.0.1:" + game.getLocalPort();
 			int code = Loader.selfTest(new String[] {Loader.SELF_TEST, "--allow", allowed, "--allow", "127.0.0.1:1",
-				"--", "--jav_config", "ignored"}, log);
+				"--allow", "repo.runelite.net:443", "--allow", "static.runelite.net:443", "--", "--jav_config",
+				"ignored"}, log);
 			String out = bytes.toString(StandardCharsets.UTF_8);
 			assertEquals(0, code, out);
 			assertTrue(out.contains("[loader] self-test: reached " + allowed + " through the guard"), out);
 			assertTrue(out.contains("[loader] self-test: 192.0.2.1:80 refused ("), out);
+			assertTrue(out.contains("[loader] self-test: repo.runelite.net:443, static.runelite.net:443 let through"),
+				out);
+			assertTrue(out.contains("[loader] self-test: https://api.runelite.net refused"), out);
 			assertTrue(out.contains(Loader.SELF_TEST_OK + ": java "), out);
-			assertEquals(List.of(Loader.SELF_TEST, "--allow", "h:1", "--allow", "h:2"),
-				Loader.selfTestArguments(new Manifest.Server("h", 1, 2, "ab")));
+			assertEquals(List.of(Loader.SELF_TEST, "--allow", "h:1", "--allow", "h:2", "--allow", "repo.runelite.net:443",
+				"--allow", "static.runelite.net:443"), Loader.selfTestArguments(new Manifest.Server("h", 1, 2, "ab")));
+		}
+		// A child given only our server's ports, as before RuneLite's servers were allowed, fails the self-test.
+		try (java.net.ServerSocket game = new java.net.ServerSocket(0, 50, java.net.InetAddress.getLoopbackAddress()))
+		{
+			bytes.reset();
+			int code = Loader.selfTest(new String[] {Loader.SELF_TEST, "--allow", "127.0.0.1:" + game.getLocalPort()},
+				log);
+			String out = bytes.toString(StandardCharsets.UTF_8);
+			assertEquals(Loader.EXIT_START, code, out);
+			assertTrue(out.contains("self-test FAILED: repo.runelite.net:443 is not let through"), out);
 		}
 		bytes.reset();
 		assertEquals(Loader.EXIT_USAGE, Loader.selfTest(new String[] {Loader.SELF_TEST}, log));
