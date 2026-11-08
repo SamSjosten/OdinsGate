@@ -6,6 +6,13 @@
       "commit": "1e634e64717418713898b06061a189ec1cdf948d",
       "bootstrapSha256": "25f22ff874ddf8c4016c8d03150c24920cdaa536ae7ad44aed36173c826c0b2a",
       "source": "static.runelite.net commit 'Release 1.13.4' (2026-10-24); its bootstrap.json.sha256 signature checks out against RuneLite's runelite.crt"
+    },
+    {
+      "revision": 242,
+      "runelite": "1.13.6",
+      "commit": "b4dab8e7cfdef726c45d2772d60d8a633d397361",
+      "bootstrapSha256": "a499704b700c88668ab381c20c2e4b2941b3cea377225cc651c86ce7c08bf440",
+      "source": "static.runelite.net commit 'Release 1.13.6' (2026-11-03), RuneLite's first release with the 2026-11-03 (242) gamevals"
     }
   ]
 }
